@@ -61,7 +61,7 @@ async function handle(request: Request, splat: string): Promise<Response> {
         })
       : null;
   try {
-    rl.consume(`reseller:ip:${ip}`, 120, rl.MINUTE);
+    rl.consume(`reseller:ip:${ip}`, 240, rl.MINUTE);
     // Stop API-key guessing: an IP that sent too many wrong keys is blocked
     // before its key is even looked up, so a lucky guess can't get through.
     rl.assertUnder(`reseller-badkey:ip:${ip}`, 20, 10 * rl.MINUTE);
@@ -80,8 +80,8 @@ async function handle(request: Request, splat: string): Promise<Response> {
   }
   const { uid, user } = account;
   try {
-    rl.consume(`reseller:key:${uid}`, 60, rl.MINUTE);
-    if (path === "order" && request.method === "POST") rl.consume(`reseller-order:key:${uid}`, 20, rl.MINUTE);
+    rl.consume(`reseller:key:${uid}`, 120, rl.MINUTE);
+    if (path === "order" && request.method === "POST") rl.consume(`reseller-order:key:${uid}`, 40, rl.MINUTE);
   } catch (e) {
     return tooMany(e) ?? json({ ok: false, error: "Rate limit" }, 429);
   }
