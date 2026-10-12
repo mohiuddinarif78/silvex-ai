@@ -267,17 +267,9 @@ export async function isBotAdmin(chatId: number): Promise<boolean> {
     return true;
   }
   adminCache.set(chatId, { v: false, at: Date.now() });
-  // Fresh database: the very first person who opens the bot becomes its owner.
-  const existing = await dbGet<any>("telegramAdmins");
-  if (!existing || Object.keys(existing).length === 0) {
-    const c = await cfg();
-    if (!String(c?.telegramOwners ?? "").trim()) {
-      await dbPut(`telegramAdmins/${chatId}`, true);
-      await dbPut("site_settings/config/telegramOwners", String(chatId));
-      adminCache.set(chatId, { v: true, at: Date.now() });
-      return true;
-    }
-  }
+  // Owners come only from Settings → Telegram owner IDs or TELEGRAM_OWNER_IDS.
+  // (The old "first person who opens the bot becomes owner" rule was removed:
+  // a stranger could message a fresh bot first and take admin.)
   return false;
 }
 

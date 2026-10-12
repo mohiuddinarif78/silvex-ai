@@ -345,7 +345,7 @@ export function SettingsAdmin({
         <h2 className="text-sm font-black">Payments</h2>
         <input
           className={`${input} font-mono text-xs`}
-          placeholder="Crypto deposit address (0x...)"
+          placeholder="Crypto deposit address (0x...; empty = DEPOSIT_ADDRESS env)"
           value={cfg.depositAddress}
           onChange={(e) => setCfg({ ...cfg, depositAddress: e.target.value })}
         />
@@ -443,13 +443,13 @@ export function SettingsAdmin({
         </div>
         <input
           className={input}
-          placeholder="Telegram owner IDs (comma separated)"
+          placeholder="Telegram owner IDs (comma separated; empty = TELEGRAM_OWNER_IDS env)"
           value={cfg.telegramOwners}
           onChange={(e) => setCfg({ ...cfg, telegramOwners: e.target.value })}
         />
         <input
           className={input}
-          placeholder="Notification group ID (e.g. -1003955387789) — every bot event is posted here"
+          placeholder="Notification group ID (e.g. -1001234567890; empty = TELEGRAM_NOTIFY_GROUP env)"
           value={cfg.notifyGroup}
           onChange={(e) => setCfg({ ...cfg, notifyGroup: e.target.value })}
         />

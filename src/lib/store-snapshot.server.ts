@@ -28,6 +28,16 @@ function publicConfig(c: any): Record<string, any> {
 
 let loading: Promise<StoreSnapshot> | null = null;
 
+/** Public values that may come from env when Settings leaves them empty. */
+async function withEnvFallbacks(c: Record<string, any>): Promise<Record<string, any>> {
+  if (!c["depositAddress"]) {
+    const { defaultDepositAddress } = await import("./deposit.server");
+    const addr = defaultDepositAddress();
+    if (addr) c["depositAddress"] = addr;
+  }
+  return c;
+}
+
 async function build(): Promise<StoreSnapshot> {
   const [rawProducts, config, banner, flashSale, emojis, prodEmojis] = await Promise.all([
     read("products"),
@@ -53,7 +63,7 @@ async function build(): Promise<StoreSnapshot> {
   const data: StoreSnapshot = {
     ...EMPTY,
     products,
-    config: publicConfig(config),
+    config: await withEnvFallbacks(publicConfig(config)),
     banner: banner || {},
     flashSale: flashSale || null,
     emojis: emojis || {},

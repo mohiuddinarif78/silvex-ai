@@ -13,7 +13,7 @@ import type { Auth, User } from "@/lib/fb/auth";
 import type { Database } from "@/lib/fb/database";
 import { toast } from "sonner";
 import { getFirebase } from "@/lib/firebase";
-import { isOriginProject } from "@/lib/origin";
+
 import { PERMANENT_OWNER_EMAILS, isPermanentOwner, isRevokedAdmin } from "@/lib/owners";
 import { applyReferralConfig } from "@/lib/referral";
 import { slotChar } from "@/lib/web-emoji";
@@ -219,13 +219,11 @@ export function applyOwnerEmails(list?: string | string[] | null) {
   const parsed = (Array.isArray(list) ? list : String(list ?? "").split(/[,\s]+/))
     .map((e) => String(e).trim().toLowerCase())
     .filter(Boolean);
-  ownerEmails = parsed.length ? parsed : isOriginProject() ? [...DEFAULT_OWNER_EMAILS] : [];
-  if (isOriginProject()) {
-    for (const e of PERMANENT_OWNER_EMAILS) {
-      if (!ownerEmails.includes(e)) ownerEmails = [e, ...ownerEmails];
-    }
-    ownerEmails = ownerEmails.filter((e) => !isRevokedAdmin(e));
+  ownerEmails = parsed.length ? parsed : [...DEFAULT_OWNER_EMAILS];
+  for (const e of PERMANENT_OWNER_EMAILS) {
+    if (!ownerEmails.includes(e)) ownerEmails = [e, ...ownerEmails];
   }
+  ownerEmails = ownerEmails.filter((e) => !isRevokedAdmin(e));
 }
 
 export function isFixedOwner(email?: string | null) {
@@ -481,23 +479,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Brand-new database: the very first account to sign in becomes the owner,
-      // so a fresh Firebase project needs no code change at all.
-      if (!isOriginProject() && user.email) {
-        const claimed = await get(ref(db, "site_settings/bootstrapOwner")).catch(() => null);
-        const owners = await get(ref(db, "site_settings/config/ownerEmails")).catch(() => null);
-        if (!claimed?.exists() && !String(owners?.val() ?? "").trim()) {
-          await update(ref(db, "site_settings"), {
-            bootstrapOwner: user.uid,
-            "config/ownerEmails": user.email.toLowerCase(),
-          }).catch(() => {});
-          await update(ref(db, `users/${user.uid}`), {
-            isAdmin: true,
-            isOwner: true,
-            ownerRevoked: null,
-          }).catch(() => {});
-        }
-      }
+      // Owners come only from OWNER_EMAILS (env) + a role row; there is no
+      // "first account becomes owner" rule.
     })();
 
     return () => unsub();
@@ -583,7 +566,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         Array.isArray(config.categories) && config.categories.length
           ? config.categories
           : DEFAULT_CATEGORIES,
-      siteName: config.siteName || (isOriginProject() ? "Silvex AI" : "My Store"),
+      siteName: config.siteName || "Silvex AI",
       // Every place keeps its own emoji; nothing is guessed from the character.
       emoji: (key: string) => slotEmojis[key]?.char || slotChar(key),
       emojiImg: (key: string) => (slotEmojis[key] ? slotEmojiImgs[key] || "" : ""),

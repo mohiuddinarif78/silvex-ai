@@ -1,5 +1,3 @@
-import { isOriginProject } from "./origin";
-
 /**
  * Owner / revoked-admin email lists.
  *
@@ -29,7 +27,7 @@ function envList(...names: string[]): string[] {
 
 /**
  * Permanent owners of the store. They always keep full admin access and nobody
- * can grant admin to others. Ignored on any remixed database.
+ * can grant admin to others.
  */
 export const PERMANENT_OWNER_EMAILS: string[] = envList("VITE_OWNER_EMAILS", "OWNER_EMAILS");
 
@@ -42,11 +40,9 @@ export const REVOKED_ADMIN_EMAILS: string[] = envList(
 const norm = (e?: string | null) => String(e ?? "").trim().toLowerCase();
 
 export function isPermanentOwner(email?: string | null): boolean {
-  if (!isOriginProject()) return false;
   return PERMANENT_OWNER_EMAILS.includes(norm(email));
 }
 
 export function isRevokedAdmin(email?: string | null): boolean {
-  if (!isOriginProject()) return false;
   return REVOKED_ADMIN_EMAILS.includes(norm(email));
 }

@@ -1,7 +1,7 @@
 import { cloudCreateIfAbsent, cloudGet, cloudPatch, cloudPush, cloudPut, cloudTransact, usingCloud } from "./cloud-db.server";
 /** Server-only helpers for the Telegram bot + Firebase Realtime Database REST access. */
 import { createHash, timingSafeEqual } from "crypto";
-import { isOriginProject } from "./origin";
+
 import { hasPremiumEmoji, htmlToEntities, stripPremiumEmojiTags, type TgEntity } from "./telegram-entities";
 
 /** Database URL: set FIREBASE_DATABASE_URL when remixing to another project. */
@@ -10,11 +10,23 @@ export const rtdbUrl = () =>
   (process.env["FIREBASE_DATABASE_URL"] || DEFAULT_RTDB_URL).replace(/\/+$/, "");
 export const RTDB_URL = DEFAULT_RTDB_URL;
 
-/** Fallbacks of the original store only — a new database starts empty. */
-const DEFAULT_SITE_URL = "https://silvex-ai.com";
-const DEFAULT_OWNER_IDS = [7926443195, 6898461453];
-/** Activity group where every bot notification is mirrored. */
-const DEFAULT_GROUP_ID = "-1003955387789";
+/**
+ * Store-specific values. Settings (site_settings/config) always win; these env
+ * variables are only the fallback, and nothing is hardcoded:
+ *   SITE_URL               website address
+ *   TELEGRAM_OWNER_IDS     comma-separated Telegram chat ids of the bot owners
+ *   TELEGRAM_NOTIFY_GROUP  group/channel id that mirrors bot notifications
+ */
+function envList(name: string): string {
+  const env = (globalThis as any)?.process?.env;
+  const v = env ? env[name] : undefined;
+  return typeof v === "string" ? v.trim() : "";
+}
+function parseIds(raw: unknown): number[] {
+  return (Array.isArray(raw) ? raw : String(raw ?? "").split(/[,\s]+/))
+    .map((v) => Number(String(v).trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
 
 let runtimeSiteUrl = "";
 let runtimeOwnerIds: number[] = [];
@@ -34,22 +46,19 @@ export function applyBotConfig(
   if (c.botToken !== undefined) runtimeBotToken = String(c.botToken ?? "").trim();
   if (c.siteUrl) runtimeSiteUrl = String(c.siteUrl).trim().replace(/\/+$/, "");
   if (c.notifyGroup !== undefined) runtimeGroupId = normalizeGroupId(c.notifyGroup);
-  const raw = c.telegramOwners;
-  const ids = (Array.isArray(raw) ? raw : String(raw ?? "").split(/[,\s]+/))
-    .map((v) => Number(String(v).trim()))
-    .filter((n) => Number.isFinite(n) && n > 0);
+  const ids = parseIds(c.telegramOwners);
   if (ids.length) runtimeOwnerIds = ids;
 }
 
-export const SITE_URL_DEFAULT = DEFAULT_SITE_URL;
 export const siteUrl = () =>
-  runtimeSiteUrl || (isOriginProject() ? DEFAULT_SITE_URL : process.env["SITE_URL"] || "");
+  runtimeSiteUrl || envList("SITE_URL").replace(/\/+$/, "");
 export const ownerIds = () =>
-  runtimeOwnerIds.length ? runtimeOwnerIds : isOriginProject() ? DEFAULT_OWNER_IDS : [];
+  runtimeOwnerIds.length ? runtimeOwnerIds : parseIds(envList("TELEGRAM_OWNER_IDS"));
 
 /**
  * Telegram supergroup ids are negative (-100…). The admin may paste the plain
- * digits (1003955387789) or an invite link; normalize to the numeric chat id.
+ * digits (1234567890, shown by some clients) or an invite link; normalize to
+ * the numeric chat id (-1001234567890).
  */
 function normalizeGroupId(raw: string | number): string {
   const s = String(raw ?? "").trim();
@@ -60,8 +69,7 @@ function normalizeGroupId(raw: string | number): string {
   return digits.length >= 10 ? `-100${digits}` : digits;
 }
 
-export const groupId = () =>
-  runtimeGroupId || (isOriginProject() ? DEFAULT_GROUP_ID : "");
+export const groupId = () => runtimeGroupId || normalizeGroupId(envList("TELEGRAM_NOTIFY_GROUP"));
 
 
 

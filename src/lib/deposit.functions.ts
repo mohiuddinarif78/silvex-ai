@@ -1,11 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { DepositCheck } from "./deposit.server";
-import { isOriginProject } from "./origin";
 
-/** Wallet of the original store. A different Firebase project starts with none. */
-export const ORIGIN_DEPOSIT_ADDRESS = "0x4c1506bd7a564ad416925997f4f75f79c3da07f2";
-export const DEPOSIT_ADDRESS = ORIGIN_DEPOSIT_ADDRESS;
-export const fallbackDepositAddress = () => (isOriginProject() ? ORIGIN_DEPOSIT_ADDRESS : "");
+/**
+ * Nothing hardcoded: the store's address comes from Settings, or from the
+ * DEPOSIT_ADDRESS env variable, which the server adds to the store snapshot.
+ */
+export const fallbackDepositAddress = () => "";
 
 export type { DepositCheck };
 

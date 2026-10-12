@@ -1,18 +1,19 @@
 /**
  * Referral programme. Every value here is a fallback only — the admin panel
  * (Settings → Referral & links) overrides them from site_settings/config.
- * On a brand-new database the built-in bot/website links do not apply.
+ * Bot username / website fall back to TELEGRAM_BOT_USERNAME / SITE_URL (server)
+ * or the current page address (browser); nothing store-specific is hardcoded.
  */
-import { isOriginProject } from "./origin";
 
 export const REFERRAL_DEFAULTS = {
   rate: 0.02,
   cap: 201,
-  botUsername: "silvexaibot",
-  websiteUrl: "https://silvex-ai.com",
 };
 
-let settings = { rate: REFERRAL_DEFAULTS.rate, cap: REFERRAL_DEFAULTS.cap, botUsername: "", websiteUrl: "" };
+const serverEnv = (name: string): string =>
+  String((globalThis as any)?.process?.env?.[name] ?? "").trim();
+
+const settings = { rate: REFERRAL_DEFAULTS.rate, cap: REFERRAL_DEFAULTS.cap, botUsername: "", websiteUrl: "" };
 
 export type ReferralConfig = {
   referralRate?: number | string;
@@ -37,14 +38,11 @@ export const referralCap = () => settings.cap;
 export const referralPercent = () => Math.round(settings.rate * 10000) / 100;
 export const websiteUrl = () => {
   if (settings.websiteUrl) return settings.websiteUrl;
-  if (isOriginProject()) return REFERRAL_DEFAULTS.websiteUrl;
   if (typeof window !== "undefined") return window.location.origin;
-  return "";
+  return serverEnv("SITE_URL").replace(/\/+$/, "");
 };
-export const botUsername = () => {
-  if (settings.botUsername) return settings.botUsername;
-  return isOriginProject() ? REFERRAL_DEFAULTS.botUsername : "";
-};
+export const botUsername = () =>
+  settings.botUsername || serverEnv("TELEGRAM_BOT_USERNAME").replace(/^@/, "");
 
 
 export function websiteReferralLink(code: string) {

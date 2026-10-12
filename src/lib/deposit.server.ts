@@ -1,10 +1,13 @@
 /** Server-only on-chain deposit verification (BEP20 + Polygon USDT/USDC). */
-import { isOriginProject } from "./origin";
 
-export const DEFAULT_DEPOSIT_ADDRESS = "0x4c1506bd7a564ad416925997f4f75f79c3da07f2";
-
-/** Built-in wallet of the original store only; a new database starts with none. */
-export const defaultDepositAddress = () => (isOriginProject() ? DEFAULT_DEPOSIT_ADDRESS : "");
+/**
+ * Fallback deposit wallet when Settings → Deposit address is empty.
+ * Comes from the DEPOSIT_ADDRESS env variable; nothing is hardcoded.
+ */
+export const defaultDepositAddress = (): string => {
+  const v = String((globalThis as any)?.process?.env?.["DEPOSIT_ADDRESS"] ?? "").trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(v) ? v : "";
+};
 
 
 const TRANSFER_TOPIC =
