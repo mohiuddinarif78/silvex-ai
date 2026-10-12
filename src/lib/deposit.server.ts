@@ -14,11 +14,17 @@ export type ChainKey = "bep20" | "polygon";
 
 export const CHAINS: Record<
   ChainKey,
-  { label: string; rpc: string[]; tokens: Record<string, { symbol: string; decimals: number }> }
+  {
+    label: string;
+    rpc: string[];
+    minConfirmations: number;
+    tokens: Record<string, { symbol: string; decimals: number }>;
+  }
 > = {
   bep20: {
     label: "BNB Chain (BEP20)",
     rpc: ["https://bsc-dataseed.binance.org", "https://bsc-rpc.publicnode.com"],
+    minConfirmations: 15,
     tokens: {
       "0x55d398326f99059ff775485246999027b3197955": { symbol: "USDT", decimals: 18 },
       "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": { symbol: "USDC", decimals: 18 },
@@ -27,6 +33,7 @@ export const CHAINS: Record<
   polygon: {
     label: "Polygon",
     rpc: ["https://polygon-bor-rpc.publicnode.com", "https://1rpc.io/matic"],
+    minConfirmations: 30,
     tokens: {
       "0xc2132d05d31c914a87c6611c10748aeb04b58e8f": { symbol: "USDT", decimals: 6 },
       "0x2791bca1f2de4661ed88a30c99a7a9449aa84174": { symbol: "USDC", decimals: 6 },
@@ -35,23 +42,53 @@ export const CHAINS: Record<
   },
 };
 
+async function rpcAt(url: string, method: string, params: unknown[]): Promise<any> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const json = (await res.json()) as { result?: unknown; error?: { message: string } };
+  if (json.error) throw new Error(json.error.message);
+  return json.result;
+}
+
 async function rpc(chain: ChainKey, method: string, params: unknown[]): Promise<any> {
   let lastError: unknown = null;
   for (const url of CHAINS[chain].rpc) {
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      });
-      const json = (await res.json()) as { result?: unknown; error?: { message: string } };
-      if (json.error) throw new Error(json.error.message);
-      return json.result;
+      return await rpcAt(url, method, params);
     } catch (e) {
       lastError = e;
     }
   }
   throw lastError instanceof Error ? lastError : new Error("Network unavailable");
+}
+
+/**
+ * Confirm a receipt against a SECOND, independent RPC so we never auto-credit
+ * on the word of a single (possibly compromised) endpoint. Returns true only
+ * when another endpoint agrees the tx succeeded in the same block. If no second
+ * endpoint is reachable, returns false (caller falls back to manual approval).
+ */
+async function receiptAgreedBySecondRpc(
+  chain: ChainKey,
+  hash: string,
+  expectBlock: string,
+): Promise<boolean> {
+  const [primary, ...others] = CHAINS[chain].rpc;
+  void primary;
+  for (const url of others) {
+    try {
+      const r = await rpcAt(url, "eth_getTransactionReceipt", [hash]);
+      if (r && r.status === "0x1" && String(r.blockNumber).toLowerCase() === String(expectBlock).toLowerCase()) {
+        return true;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return false;
 }
 
 function toAmount(hexData: string, decimals: number) {
@@ -69,6 +106,7 @@ export type DepositCheck = {
   symbol: string | null;
   chain: string;
   ageMinutes: number;
+  confirmations: number;
   message: string;
 };
 
@@ -86,6 +124,7 @@ export async function verifyDepositOnChain(
     symbol: null,
     chain: conf.label,
     ageMinutes: 0,
+    confirmations: 0,
     message,
   });
 
@@ -96,6 +135,12 @@ export async function verifyDepositOnChain(
   const block = await rpc(chain, "eth_getBlockByNumber", [receipt.blockNumber, false]);
   const timestamp = Number(BigInt(block?.timestamp ?? "0x0")) * 1000;
   const ageMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+
+  // How many blocks have been mined on top of this one.
+  const head = await rpc(chain, "eth_blockNumber", []).catch(() => null);
+  const txBlock = BigInt(receipt.blockNumber ?? "0x0");
+  const headBlock = head ? BigInt(head) : txBlock;
+  const confirmations = Number(headBlock >= txBlock ? headBlock - txBlock : 0n);
 
   const target = address.toLowerCase().slice(2);
   let amount = 0;
@@ -115,25 +160,47 @@ export async function verifyDepositOnChain(
     return fail("No USDT/USDC payment to our deposit address was found in this transaction.");
   }
 
+  const rounded = Math.round(amount * 100) / 100;
+  const manual = (message: string): DepositCheck => ({
+    ok: true,
+    status: "manual",
+    amount: rounded,
+    symbol,
+    chain: conf.label,
+    ageMinutes,
+    confirmations,
+    message,
+  });
+
+  // Old transactions always go to manual review (unchanged behaviour).
   if (ageMinutes > 10) {
-    return {
-      ok: true,
-      status: "manual",
-      amount: Math.round(amount * 100) / 100,
-      symbol,
-      chain: conf.label,
-      ageMinutes,
-      message: `Payment found, but it is ${ageMinutes} minutes old, so an admin will approve it.`,
-    };
+    return manual(`Payment found, but it is ${ageMinutes} minutes old, so an admin will approve it.`);
+  }
+
+  // Not enough confirmations yet: a freshly-mined tx can still be reorged out,
+  // so hold it for manual approval instead of auto-crediting.
+  if (confirmations < conf.minConfirmations) {
+    return manual(
+      `Payment found with ${confirmations}/${conf.minConfirmations} confirmations — ` +
+        `an admin will approve it once it settles.`,
+    );
+  }
+
+  // Never auto-credit on a single endpoint's word: require a second, independent
+  // RPC to agree the tx succeeded in the same block. If none agrees, hold it.
+  const agreed = await receiptAgreedBySecondRpc(chain, hash, String(receipt.blockNumber));
+  if (!agreed) {
+    return manual("Payment found, but it could not be double-checked right now — an admin will approve it.");
   }
 
   return {
     ok: true,
     status: "credited",
-    amount: Math.round(amount * 100) / 100,
+    amount: rounded,
     symbol,
     chain: conf.label,
     ageMinutes,
+    confirmations,
     message: "Payment verified on-chain.",
   };
 }
@@ -158,6 +225,7 @@ export async function verifyDepositAnyChain(hash: string, address: string): Prom
       symbol: null,
       chain: "-",
       ageMinutes: 0,
+      confirmations: 0,
       message: "Could not read that transaction. Try again in a minute.",
     }
   );
