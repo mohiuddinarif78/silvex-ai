@@ -20,7 +20,7 @@ analysis. Current status of each finding:
 | F-2 | Service-role key committed in `.env` | Critical | **Partially fixed** — `.env` removed from the repo and git-ignored; `.env.example` added with names only. **The previously committed key still exists in git history and MUST be rotated in Supabase.** |
 | F-3 | Reseller API non-atomic wallet debit (overspend) | High | **Fixed** — `reseller/$.ts` now debits via an atomic `dbTransact` CAS with the insufficient-funds guard inside the transaction, claims `auto` stock atomically, refunds in full when delivery yields nothing, and supports an optional `idempotencyKey` claimed via `dbCreateIfAbsent` to make retries safe. (Minor residual: a *partial* supplier delivery still charges full price — tracked separately, not an overspend.) |
 | F-4 | Inconsistent owner identity across codebase | High | **Fixed** — owner/revoked lists now come from env (`OWNER_EMAILS` / `REVOKED_ADMIN_EMAILS`), single source via `owners.ts`; hardcoded emails removed from `StoreContext`, `push.server.ts`, and the deleted Firebase rules. The DB signup trigger grants the owner role to the configured owner email. |
-| F-5 | Public `binance-check` leaks config/status | Medium | **Open** — endpoint unchanged. |
+| F-5 | Public `binance-check` leaks config/status | Medium | **Fixed** — endpoint deleted; the same config (keys-saved, address, Pay ID) is available to the owner through the admin panel. No code referenced it. |
 | F-6 | Crypto deposit verification weaknesses | Medium | **Open** — unchanged. |
 | F-7 | Admin UI gating is client-only | Low | **Open** (server checks remain the real boundary; low risk). |
 | F-8 | Wallet column clamped on full-row writes | Medium | **Open** — `cloud-db.server.ts` `userToRow` unchanged. |

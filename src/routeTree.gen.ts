@@ -28,7 +28,6 @@ import { Route as AdminRequestsRouteImport } from './routes/admin.requests'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminUsersRouteImport } from './routes/admin.users'
 import { Route as AdminEditProductIdRouteImport } from './routes/admin.edit.$productId'
-import { Route as ApiPublicBinanceCheckRouteImport } from './routes/api/public/binance-check'
 import { Route as ApiPublicProductImgIdRouteImport } from './routes/api/public/product-img/$id'
 import { Route as ApiPublicRazorpayWebhookRouteImport } from './routes/api/public/razorpay/webhook'
 import { Route as ApiPublicResellerSplatRouteImport } from './routes/api/public/reseller/$'
@@ -129,11 +128,6 @@ const AdminEditProductIdRoute = AdminEditProductIdRouteImport.update({
   path: '/edit/$productId',
   getParentRoute: () => AdminRoute,
 } as any)
-const ApiPublicBinanceCheckRoute = ApiPublicBinanceCheckRouteImport.update({
-  id: '/api/public/binance-check',
-  path: '/api/public/binance-check',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiPublicProductImgIdRoute = ApiPublicProductImgIdRouteImport.update({
   id: '/api/public/product-img/$id',
   path: '/api/public/product-img/$id',
@@ -177,7 +171,6 @@ export interface FileRoutesByFullPath {
   '/admin/users': typeof AdminUsersRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/edit/$productId': typeof AdminEditProductIdRoute
-  '/api/public/binance-check': typeof ApiPublicBinanceCheckRoute
   '/api/public/product-img/$id': typeof ApiPublicProductImgIdRoute
   '/api/public/razorpay/webhook': typeof ApiPublicRazorpayWebhookRoute
   '/api/public/reseller/$': typeof ApiPublicResellerSplatRoute
@@ -202,7 +195,6 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AdminUsersRoute
   '/admin': typeof AdminIndexRoute
   '/admin/edit/$productId': typeof AdminEditProductIdRoute
-  '/api/public/binance-check': typeof ApiPublicBinanceCheckRoute
   '/api/public/product-img/$id': typeof ApiPublicProductImgIdRoute
   '/api/public/razorpay/webhook': typeof ApiPublicRazorpayWebhookRoute
   '/api/public/reseller/$': typeof ApiPublicResellerSplatRoute
@@ -229,7 +221,6 @@ export interface FileRoutesById {
   '/admin/users': typeof AdminUsersRoute
   '/admin/': typeof AdminIndexRoute
   '/admin/edit/$productId': typeof AdminEditProductIdRoute
-  '/api/public/binance-check': typeof ApiPublicBinanceCheckRoute
   '/api/public/product-img/$id': typeof ApiPublicProductImgIdRoute
   '/api/public/razorpay/webhook': typeof ApiPublicRazorpayWebhookRoute
   '/api/public/reseller/$': typeof ApiPublicResellerSplatRoute
@@ -257,7 +248,6 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/admin/'
     | '/admin/edit/$productId'
-    | '/api/public/binance-check'
     | '/api/public/product-img/$id'
     | '/api/public/razorpay/webhook'
     | '/api/public/reseller/$'
@@ -282,7 +272,6 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/admin'
     | '/admin/edit/$productId'
-    | '/api/public/binance-check'
     | '/api/public/product-img/$id'
     | '/api/public/razorpay/webhook'
     | '/api/public/reseller/$'
@@ -308,7 +297,6 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/admin/'
     | '/admin/edit/$productId'
-    | '/api/public/binance-check'
     | '/api/public/product-img/$id'
     | '/api/public/razorpay/webhook'
     | '/api/public/reseller/$'
@@ -325,7 +313,6 @@ export interface RootRouteChildren {
   ProductsRoute: typeof ProductsRoute
   ProfileRoute: typeof ProfileRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
-  ApiPublicBinanceCheckRoute: typeof ApiPublicBinanceCheckRoute
   ApiPublicProductImgIdRoute: typeof ApiPublicProductImgIdRoute
   ApiPublicRazorpayWebhookRoute: typeof ApiPublicRazorpayWebhookRoute
   ApiPublicResellerSplatRoute: typeof ApiPublicResellerSplatRoute
@@ -467,13 +454,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminEditProductIdRouteImport
       parentRoute: typeof AdminRoute
     }
-    '/api/public/binance-check': {
-      id: '/api/public/binance-check'
-      path: '/api/public/binance-check'
-      fullPath: '/api/public/binance-check'
-      preLoaderRoute: typeof ApiPublicBinanceCheckRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/public/product-img/$id': {
       id: '/api/public/product-img/$id'
       path: '/api/public/product-img/$id'
@@ -543,7 +523,6 @@ const rootRouteChildren: RootRouteChildren = {
   ProductsRoute: ProductsRoute,
   ProfileRoute: ProfileRoute,
   ResetPasswordRoute: ResetPasswordRoute,
-  ApiPublicBinanceCheckRoute: ApiPublicBinanceCheckRoute,
   ApiPublicProductImgIdRoute: ApiPublicProductImgIdRoute,
   ApiPublicRazorpayWebhookRoute: ApiPublicRazorpayWebhookRoute,
   ApiPublicResellerSplatRoute: ApiPublicResellerSplatRoute,
