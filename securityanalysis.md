@@ -9,7 +9,7 @@ reportedly compromised.
 
 ---
 
-## 0. Remediation Status (updated 2026-10-12, commit ad9c809)
+## 0. Remediation Status (updated 2026-10-12, commits ad9c809 + bdd3637)
 
 A round of hardening was completed and pushed to `main` after the initial
 analysis. Current status of each finding:
@@ -49,16 +49,24 @@ and role change flows through server functions that verify the login token and
 re-check authorization server-side, wallet math is atomic, Postgres RLS is
 default-deny, and the service-role key is only used server-side.
 
-However, the repository still carries the **legacy Firebase security rules
-(`database.rules.json`)**, and those rules are the most likely cause of the
-reported credit hack. They grant full admin — including the right to write any
-user's `wallet` — to anyone whose account carries an `isAdmin` flag *and* one of
-two hardcoded Gmail addresses that are **not** the project's real owner. If the
-Firebase Realtime Database instance referenced in `README.md`
-(`silvex-ai-default-rtdb.firebaseio.com`) is still live, an attacker who created
-an account under one of those emails (or who could set `isAdmin` on their own
-record during an earlier weaker-rules window) could read and overwrite any
-wallet, then spend the credit — exactly the described attack.
+**Most likely root cause of the original incident (now remediated in code):**
+the repository previously carried the **legacy Firebase security rules
+(`database.rules.json`)**, which granted full admin — including the right to
+write any user's `wallet` — to anyone whose account carried an `isAdmin` flag
+*and* one of two hardcoded Gmail addresses that were **not** the project's real
+owner. On Firebase RTDB, clients write directly to the database and that rules
+file was the only gate, so an attacker authenticated as one of those emails could
+overwrite any wallet straight from the browser — exactly the described attack.
+
+As of commits ad9c809 + bdd3637 this path is closed **in the codebase**:
+`database.rules.json` has been deleted, the app runs only on Supabase with
+server-side authorization (`cloud-access.server.ts`) + default-deny RLS, and all
+owner identity is now sourced from environment variables with the hardcoded
+non-owner emails removed (F-1, F-4 fixed). **Two external actions still remain**
+to fully close the incident: confirm the Firebase RTDB instance
+(`silvex-ai-default-rtdb.firebaseio.com`) is actually decommissioned, and rotate
+the Supabase keys (F-2) since the old service-role key is still recoverable from
+git history.
 
 Two further issues could independently enable wallet tampering or financial
 loss going forward:
