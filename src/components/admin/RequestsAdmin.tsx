@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { get, onValue, push, ref, set, update } from "@/lib/fb/database";
+import { onValue, ref } from "@/lib/fb/database";
 import { useStore } from "@/context/StoreContext";
-import { reportBalanceChange } from "@/lib/wallet.functions";
+import { decideRequestWeb } from "@/lib/wallet.functions";
 import { Empty, type RequestRow } from "@/components/admin/shared";
 
 export function RequestsAdmin() {
-  const { db, notify, user } = useStore();
+  const { db, notify } = useStore();
   const [requests, setRequests] = useState<RequestRow[]>([]);
 
   useEffect(() => {
@@ -18,18 +18,13 @@ export function RequestsAdmin() {
   }, [db]);
 
   async function decide(request: RequestRow, approve: boolean) {
-    if (!db) return;
-    if (approve) {
-      const wallet = await get(ref(db, `users/${request.uid}/wallet`));
-      const current = Number(wallet.val()) || 0;
-      const next = request.type === "Deposit" ? current + Number(request.amount) : current - Number(request.amount);
-      if (next < 0) return notify("User has insufficient balance");
-      await set(ref(db, `users/${request.uid}/wallet`), next);
-      await push(ref(db, `users/${request.uid}/history`), { type: request.type, amount: request.amount, desc: `${request.type} approved`, date: new Date().toISOString() });
-      const delta = request.type === "Deposit" ? Number(request.amount) : -Number(request.amount);
-      void user?.getIdToken().then((idToken) => reportBalanceChange({ data: { idToken, uid: request.uid, type: request.type, amount: delta, desc: `${request.type} request approved` } })).catch(() => undefined);
-    }
-    await update(ref(db, `requests/${request.id}`), { status: approve ? "Approved" : "Rejected" });
+    // Done on the server in one atomic step, so a double click or two admins
+    // can never apply the same request twice or overwrite a concurrent change.
+    const res = await decideRequestWeb({ data: { id: request.id, approve } }).catch((e) => ({
+      ok: false as const,
+      error: e instanceof Error ? e.message : "Could not update the request",
+    }));
+    if (!res.ok) return notify("error" in res ? res.error : "Could not update the request");
     notify(approve ? "Approved" : "Rejected");
   }
 

@@ -171,22 +171,10 @@ export async function adminDeliver(chatId: number, orderId: string, text: string
 }
 
 export async function adminCancelOrder(chatId: number, orderId: string) {
-  const o = await dbGet<any>(`orders/${orderId}`);
-  if (!o) return say(chatId, "Order not found.", adminBack);
-  if (o.status !== "Cancelled") {
-    await dbPatch(`orders/${orderId}`, { status: "Cancelled" });
-    if (o.uid) {
-      const w = (await dbGet<number>(`users/${o.uid}/wallet`)) || 0;
-      await dbPut(`users/${o.uid}/wallet`, w + Number(o.total || 0));
-      await dbPush(`users/${o.uid}/history`, {
-        type: "Refund",
-        amount: Number(o.total || 0),
-        desc: `Cancelled ${orderId.slice(-4)}`,
-        date: new Date().toISOString(),
-      });
-      invalidateUsers();
-    }
-  }
+  const { adminCancelAndRefund } = await import("@/lib/wallet.server");
+  const res = await adminCancelAndRefund(orderId);
+  if (!res.ok) return say(chatId, "Order not found or already cancelled.", adminBack);
+  if (res.uid) invalidateUsers();
   await say(chatId, `❌ Order ${orderId} cancelled and refunded.`, adminBack);
 }
 
@@ -211,22 +199,11 @@ export async function adminRequests(chatId: number) {
 }
 
 export async function adminDecideRequest(chatId: number, id: string, approve: boolean) {
-  const r = await dbGet<any>(`requests/${id}`);
-  if (!r) return say(chatId, "Request not found.", adminBack);
-  if (approve) {
-    const w = (await dbGet<number>(`users/${r.uid}/wallet`)) || 0;
-    const next = r.type === "Deposit" ? w + Number(r.amount) : w - Number(r.amount);
-    if (next < 0) return say(chatId, "User has insufficient balance.", adminBack);
-    await dbPut(`users/${r.uid}/wallet`, next);
-    await dbPush(`users/${r.uid}/history`, {
-      type: r.type,
-      amount: r.amount,
-      desc: `${r.type} approved`,
-      date: new Date().toISOString(),
-    });
-    invalidateUsers();
-  }
-  await dbPatch(`requests/${id}`, { status: approve ? "Approved" : "Rejected" });
+  const { decideWalletRequest } = await import("@/lib/wallet.server");
+  const res = await decideWalletRequest(id, approve);
+  if (!res.ok) return say(chatId, res.error, adminBack);
+  const r = res.request;
+  if (approve) invalidateUsers();
   const buyerChat = await dbGet<number>(`users/${r.uid}/telegramChatId`);
   if (buyerChat)
     await say(

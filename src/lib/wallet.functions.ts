@@ -92,3 +92,24 @@ export const reportBalanceChange = createServerFn({ method: "POST" })
     await notifyBalanceChange(data.uid, { type: data.type, amount: data.amount, desc: data.desc, by: who.email });
     return { ok: true as const };
   });
+
+/** Web admin approves/rejects a wallet request: claimed once, balance changed atomically. */
+export const decideRequestWeb = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ id: z.string().min(1).max(200), approve: z.boolean() }).parse(d))
+  .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    const who = await requireStaff();
+    const { decideWalletRequest } = await import("./wallet.server");
+    const res = await decideWalletRequest(data.id, data.approve);
+    if (!res.ok) return res;
+    if (data.approve && res.delta !== 0) {
+      const { notifyBalanceChange } = await import("./telegram.server");
+      void notifyBalanceChange(String(res.request.uid), {
+        type: res.request.type,
+        amount: res.delta,
+        desc: `${res.request.type} request approved`,
+        by: who.email,
+      }).catch(() => undefined);
+    }
+    return { ok: true as const };
+  });

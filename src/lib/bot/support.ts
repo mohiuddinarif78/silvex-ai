@@ -242,16 +242,10 @@ async function execTool(chatId: number, uid: string, name: string, args: any): P
       date: new Date().toISOString(),
     };
     if (res.status === "credited") {
-      const w = Number((await dbGet<number>(`users/${uid}/wallet`)) || 0);
-      await dbPut(`deposits/${hash}`, { ...base, status: "Credited" });
-      await dbPut(`users/${uid}/wallet`, Math.round((w + res.amount) * 100) / 100);
-      await dbPush(`users/${uid}/history`, {
-        type: "Deposit",
-        amount: res.amount,
-        desc: `${res.symbol} on ${res.chain}`,
-        date: base.date,
-      });
-      return JSON.stringify({ credited: res.amount, new_balance: w + res.amount });
+      const { claimAndCreditDeposit } = await import("@/lib/wallet.server");
+      const balance = await claimAndCreditDeposit(uid, hash, base, res.amount, `${res.symbol} on ${res.chain}`);
+      if (balance === null) return "This transaction was already used.";
+      return JSON.stringify({ credited: res.amount, new_balance: balance });
     }
     await dbPut(`deposits/${hash}`, { ...base, status: "Pending" });
     await dbPush("requests", { ...base, type: "Deposit", utr: hash, status: "Pending" });

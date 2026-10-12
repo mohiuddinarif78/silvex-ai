@@ -196,8 +196,8 @@ export async function settleBinanceDeposit(uid: string, txId: string): Promise<B
     };
   }
 
-  const balance = Math.round((balanceNow + found.amount) * 100) / 100;
-  await dbPut(`users/${uid}/wallet`, balance);
+  const { walletAdd } = await import("./wallet.server");
+  const balance = Number((await walletAdd(uid, found.amount)) ?? balanceNow);
   await dbPut(`users/${uid}/history/bnb_${key}`, {
     type: "Deposit",
     status: "Paid",
@@ -309,8 +309,8 @@ export async function settleBinancePay(uid: string, ref: string): Promise<Binanc
     };
   }
 
-  const balance = Math.round((balanceNow + found.amount) * 100) / 100;
-  await dbPut(`users/${uid}/wallet`, balance);
+  const { walletAdd } = await import("./wallet.server");
+  const balance = Number((await walletAdd(uid, found.amount)) ?? balanceNow);
   await dbPut(`users/${uid}/history/pay_${key}`, {
     type: "Deposit",
     status: "Paid",

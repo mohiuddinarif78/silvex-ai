@@ -3,7 +3,7 @@
  * checking the customer's login. Customers can no longer change their own
  * balance from the browser — the database rules block it.
  */
-import { dbGet, dbPatch, dbPush, dbPut, dbTransact, loadBotRuntime } from "./telegram.server";
+import { dbCreateIfAbsent, dbGet, dbPatch, dbPush, dbPut, dbTransact, loadBotRuntime } from "./telegram.server";
 
 const round = (n: number) => Math.round(n * 100) / 100;
 const now = () => new Date().toISOString();
@@ -17,14 +17,114 @@ export async function verifyIdToken(idToken: string): Promise<{ uid: string; ema
   return { uid: who.uid, email: who.email };
 }
 
+/**
+ * The ONE way to change a balance by an amount: an atomic compare-and-swap.
+ * Returns the new balance, or `undefined` (and writes nothing) when the change
+ * would make the balance negative. Never read a wallet and write it back.
+ */
+export async function walletAdd(uid: string, delta: number): Promise<number | undefined> {
+  return dbTransact<number>(`users/${uid}/wallet`, (w) => {
+    const next = round((Number(w) || 0) + delta);
+    return next < 0 ? undefined : next;
+  });
+}
+
 /** Adds (or removes, with a negative amount) money atomically. */
 async function addToWallet(uid: string, amount: number): Promise<number> {
-  const out = await dbTransact<number>(`users/${uid}/wallet`, (w) => round((Number(w) || 0) + amount));
+  const out = await walletAdd(uid, amount);
   return Number(out ?? 0);
 }
 
 async function history(uid: string, type: string, amount: number, desc: string) {
   await dbPush(`users/${uid}/history`, { type, amount, desc, date: now() });
+}
+
+/**
+ * Record a verified on-chain deposit exactly once and credit it atomically.
+ * Returns the new balance, or `null` when this transaction was already used
+ * (a second tap / second channel gets nothing).
+ */
+export async function claimAndCreditDeposit(
+  uid: string,
+  hash: string,
+  record: Record<string, unknown>,
+  amount: number,
+  desc: string,
+): Promise<number | null> {
+  const claimed = await dbCreateIfAbsent(`deposits/${hash}`, { ...record, status: "Credited" });
+  if (!claimed) return null;
+  const balance = await addToWallet(uid, amount);
+  await history(uid, "Deposit", amount, desc);
+  return balance;
+}
+
+/**
+ * Approve or reject a pending wallet request exactly once. The request is
+ * claimed atomically, so two admins (or a double tap) cannot apply it twice.
+ */
+export async function decideWalletRequest(
+  id: string,
+  approve: boolean,
+): Promise<{ ok: true; request: any; delta: number } | { ok: false; error: string }> {
+  let claimed: any = null;
+  const out = await dbTransact<any>(`requests/${id}`, (r) => {
+    if (!r || String(r.status || "").toLowerCase() !== "pending") return undefined;
+    claimed = r;
+    return { ...r, status: approve ? "Approved" : "Rejected" };
+  });
+  if (!out || !claimed) return { ok: false, error: "Request not found or already handled." };
+  if (!approve) return { ok: true, request: claimed, delta: 0 };
+
+  const amount = Number(claimed.amount) || 0;
+  const delta = claimed.type === "Deposit" ? amount : -amount;
+  const balance = await walletAdd(String(claimed.uid), delta);
+  if (balance === undefined) {
+    // Not enough money for a withdrawal: put the request back untouched.
+    await dbPatch(`requests/${id}`, { status: "Pending" });
+    return { ok: false, error: "User has insufficient balance." };
+  }
+  await history(String(claimed.uid), claimed.type, amount, `${claimed.type} approved`);
+  return { ok: true, request: claimed, delta };
+}
+
+/** Admin cancel: mark the order cancelled once, then refund it atomically. */
+export async function adminCancelAndRefund(
+  orderId: string,
+): Promise<{ ok: boolean; refund: number; uid: string }> {
+  let refund = 0;
+  let uid = "";
+  const out = await dbTransact<any>(`orders/${orderId}`, (o) => {
+    if (!o || o.status === "Cancelled") return undefined;
+    refund = Number(o.total) || 0;
+    uid = String(o.uid || "");
+    return { ...o, status: "Cancelled" };
+  });
+  if (!out) return { ok: false, refund: 0, uid: "" };
+  if (uid && refund > 0) {
+    await addToWallet(uid, refund);
+    await history(uid, "Refund", refund, `Cancelled ${orderId.slice(-4)}`);
+  }
+  return { ok: true, refund, uid };
+}
+
+/**
+ * Pay the referrer their commission on a purchase, capped per friend. The cap
+ * counter and the wallet are both changed atomically. Returns the amount paid.
+ */
+export async function addReferralCommission(refBy: string, buyerUid: string, total: number): Promise<number> {
+  if (!refBy || refBy === buyerUid) return 0;
+  const { referralRate, referralCap } = await import("./referral");
+  let commission = 0;
+  const out = await dbTransact<number>(`users/${refBy}/refEarned/${buyerUid}`, (cur) => {
+    const earned = Number(cur) || 0;
+    const c = round(Math.min(Number(total) * referralRate(), referralCap() - earned));
+    if (!(c > 0)) return undefined;
+    commission = c;
+    return round(earned + c);
+  });
+  if (out === undefined || !(commission > 0)) return 0;
+  await addToWallet(refBy, commission);
+  return commission;
 }
 
 /* ---------------- Checkout ---------------- */
@@ -151,16 +251,8 @@ export async function webCheckout(uid: string, email: string, input: CheckoutInp
   // Referral commission for whoever invited this buyer (capped per friend).
   try {
     const refBy = String(profile?.refBy || "");
-    if (refBy && refBy !== uid) {
-      const { referralRate, referralCap } = await import("./referral");
-      const earned = Number(await dbGet<number>(`users/${refBy}/refEarned/${uid}`)) || 0;
-      const commission = round(Math.min(total * referralRate(), referralCap() - earned));
-      if (commission > 0) {
-        await addToWallet(refBy, commission);
-        await dbPut(`users/${refBy}/refEarned/${uid}`, round(earned + commission));
-        await history(refBy, "Referral commission", commission, "From a friend's purchase");
-      }
-    }
+    const commission = await addReferralCommission(refBy, uid, total);
+    if (commission > 0) await history(refBy, "Referral commission", commission, "From a friend's purchase");
   } catch {
     /* never block an order on commission */
   }

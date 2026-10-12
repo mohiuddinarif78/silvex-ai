@@ -277,18 +277,12 @@ export async function handleText(
     };
 
     if (res.status === "credited") {
-      await dbPut(`deposits/${hash}`, { ...base, status: "Credited" });
-      const w = (await dbGet<number>(`users/${uid}/wallet`)) || 0;
-      await dbPut(`users/${uid}/wallet`, Number(w) + res.amount);
-      await dbPush(`users/${uid}/history`, {
-        type: "Deposit",
-        amount: res.amount,
-        desc: `${res.symbol} on ${res.chain}`,
-        date: base.date,
-      });
+      const { claimAndCreditDeposit } = await import("@/lib/wallet.server");
+      const balance = await claimAndCreditDeposit(uid, hash, base, res.amount, `${res.symbol} on ${res.chain}`);
+      if (balance === null) return say(chatId, "This transaction has already been used.", backHome);
       await say(
         chatId,
-        `✅ <b>Deposit done</b>\n${money(res.amount)} ${res.symbol} on ${res.chain} credited.\nNew balance: <b>${money(Number(w) + res.amount)}</b>`,
+        `✅ <b>Deposit done</b>\n${money(res.amount)} ${res.symbol} on ${res.chain} credited.\nNew balance: <b>${money(balance)}</b>`,
         backHome,
       );
       return notifyOwners(

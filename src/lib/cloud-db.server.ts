@@ -150,7 +150,9 @@ function userToRow(uid: string, u: any): any {
   row.used_ref = u.usedRef ?? null;
   row.ref_bonus_done = !!u.refBonusDone;
   row.ref_earned = num(u.refEarned);
-  row.wallet = Math.max(0, num(u.wallet));
+  // No clamping: a negative balance means a bug, and the database's
+  // CHECK (wallet >= 0) must reject it loudly instead of hiding the loss.
+  row.wallet = num(u.wallet);
   row.total_deposit = num(u.totalDeposit);
   const chat = parseInt(String(u.telegramChatId ?? "").trim(), 10);
   row.telegram_chat_id = Number.isFinite(chat) ? chat : null;

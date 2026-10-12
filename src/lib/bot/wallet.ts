@@ -359,14 +359,9 @@ export async function payReferralCommission(buyerUid: string, amount: number) {
   try {
     const refBy = await dbGet<string>(`users/${buyerUid}/refBy`);
     if (!refBy || refBy === buyerUid) return;
-    const earnedSoFar = Number((await dbGet<number>(`users/${refBy}/refEarned/${buyerUid}`)) || 0);
-    const room = referralCap() - earnedSoFar;
-    if (room <= 0) return;
-    const commission = Math.min(Math.round(Number(amount) * referralRate() * 100) / 100, room);
+    const { addReferralCommission } = await import("@/lib/wallet.server");
+    const commission = await addReferralCommission(refBy, buyerUid, Number(amount));
     if (commission <= 0) return;
-    const w = Number((await dbGet<number>(`users/${refBy}/wallet`)) || 0);
-    await dbPut(`users/${refBy}/wallet`, w + commission);
-    await dbPut(`users/${refBy}/refEarned/${buyerUid}`, earnedSoFar + commission);
     await dbPush(`users/${refBy}/history`, {
       type: "Referral commission",
       amount: commission,

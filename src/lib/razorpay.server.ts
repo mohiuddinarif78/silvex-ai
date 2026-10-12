@@ -254,8 +254,8 @@ export async function creditDeposit(opts: {
 
   // Keep the old lookup records for compatibility and payment-id auditing.
   await Promise.all(keys.map((k) => dbPut(`razorpayPayments/${k}`, record)));
-  const balance = Math.round((current + opts.usd) * 100) / 100;
-  await dbPut(`users/${opts.uid}/wallet`, balance);
+  const { walletAdd } = await import("./wallet.server");
+  const balance = Number((await walletAdd(opts.uid, opts.usd)) ?? current);
 
   // Turn the earlier "Pending" line into a paid one, or add a fresh paid line.
   const entry = {
