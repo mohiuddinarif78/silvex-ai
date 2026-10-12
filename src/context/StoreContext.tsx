@@ -206,14 +206,13 @@ g.__rkrStoreContext = StoreContext;
 
 const CART_KEY = "rkr_cart_v1";
 
-/** Store owners of the ORIGINAL database only. A new Firebase project starts with none. */
-export const DEFAULT_OWNER_EMAILS = [
-  "red.eyes.owner121@gmail.com",
-  "mohiuddinarif78@gmail.com",
-];
-/** Permanent owners of the original store; ignored on any other database. */
-export const FIXED_OWNER_EMAIL = "red.eyes.owner121@gmail.com";
 export { PERMANENT_OWNER_EMAILS, isPermanentOwner } from "@/lib/owners";
+import { PERMANENT_OWNER_EMAILS as OWNER_EMAILS_ENV } from "@/lib/owners";
+
+/** Store owners, sourced from env (VITE_OWNER_EMAILS). Empty on a fresh store. */
+export const DEFAULT_OWNER_EMAILS = OWNER_EMAILS_ENV;
+/** First configured owner, if any; kept for backwards compatibility. */
+export const FIXED_OWNER_EMAIL = OWNER_EMAILS_ENV[0] ?? "";
 let ownerEmails: string[] = [];
 
 export function applyOwnerEmails(list?: string | string[] | null) {

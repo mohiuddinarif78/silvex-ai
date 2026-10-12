@@ -39,8 +39,8 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "qamify",
     name: "Qamify",
-    url: "https://api.qamify.site/v1",
-    key: "qamify_41bbf7d4d63d0fc75eb1a889e0bf96403c109673ea57a709",
+    url: process.env["PROVIDER_QAMIFY_URL"] || "https://api.qamify.site/v1",
+    key: process.env["PROVIDER_QAMIFY_KEY"] || "",
     docs: "https://api.qamify.site/docs",
     markup: 130,
     shape: {
@@ -55,8 +55,8 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "mmostore",
     name: "MMO Store",
-    url: "https://api.mmostore.qzz.io",
-    key: "mmostore_c716a85591c17abfd64c9fce3bb05010ee3ce53336d1da27",
+    url: process.env["PROVIDER_MMOSTORE_URL"] || "https://api.mmostore.qzz.io",
+    key: process.env["PROVIDER_MMOSTORE_KEY"] || "",
     docs: "https://api.mmostore.qzz.io/apidocumentation",
     markup: 130,
     shape: {
@@ -70,8 +70,8 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "safwantiger",
     name: "Safwan Tiger Shop",
-    url: "https://safwantigershopbot-production.up.railway.app/api",
-    key: "stapi_508629eb3341ea1c3cf011a83c12480e152e74a5b359115c4fc5fd721086a7a3",
+    url: process.env["PROVIDER_SAFWANTIGER_URL"] || "https://safwantigershopbot-production.up.railway.app/api",
+    key: process.env["PROVIDER_SAFWANTIGER_KEY"] || "",
     docs: "https://safwantigershopbot-production.up.railway.app/api",
     markup: 130,
     shape: {
@@ -85,8 +85,8 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "cupponhub",
     name: "CupponHub",
-    url: "https://cupponhub.shop/reseller/api",
-    key: "ch_live_Z6_CAN12sF5wEDy0mtiwxeovTxlQ9iKMSL_HbbD41cg",
+    url: process.env["PROVIDER_CUPPONHUB_URL"] || "https://cupponhub.shop/reseller/api",
+    key: process.env["PROVIDER_CUPPONHUB_KEY"] || "",
     docs: "https://cupponhub.shop/reseller/api/docs/",
     markup: 130,
     shape: {
@@ -102,8 +102,8 @@ export const PROVIDERS: ProviderDef[] = [
   {
     id: "eklas",
     name: "Eklas",
-    url: "https://api.eklas.dev/v1",
-    key: "tgb_O0aZZYoosD_gMgAo8DCGcNJyVO7YwrnkpAeRMd4z21z8kXEQ",
+    url: process.env["PROVIDER_EKLAS_URL"] || "https://api.eklas.dev/v1",
+    key: process.env["PROVIDER_EKLAS_KEY"] || "",
     docs: "https://docs.eklas.dev",
     markup: 130,
     shape: {

@@ -13,7 +13,7 @@ function setup(): boolean {
   if (ready) return true;
   const priv = process.env["VAPID_PRIVATE_KEY"];
   if (!priv) return false;
-  webpush.setVapidDetails("mailto:red.eyes.owner121@gmail.com", VAPID_PUBLIC_KEY, priv);
+  webpush.setVapidDetails("mailto:adithyanbraj@gmail.com", VAPID_PUBLIC_KEY, priv);
   ready = true;
   return true;
 }
