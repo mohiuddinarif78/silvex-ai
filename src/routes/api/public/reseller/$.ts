@@ -51,10 +51,40 @@ function publicProduct(id: string, p: any) {
 
 async function handle(request: Request, splat: string): Promise<Response> {
   const path = (splat || "").replace(/^\/+|\/+$/g, "");
+  const rl = await import("@/lib/rate-limit.server");
+  const ip = rl.clientIpFrom((n) => request.headers.get(n));
+  const tooMany = (e: unknown) =>
+    e instanceof rl.RateLimitError
+      ? new Response(JSON.stringify({ ok: false, error: e.message }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": String(e.retryAfterSec), ...cors },
+        })
+      : null;
+  try {
+    rl.consume(`reseller:ip:${ip}`, 120, rl.MINUTE);
+    // Stop API-key guessing: an IP that sent too many wrong keys is blocked
+    // before its key is even looked up, so a lucky guess can't get through.
+    rl.assertUnder(`reseller-badkey:ip:${ip}`, 20, 10 * rl.MINUTE);
+  } catch (e) {
+    return tooMany(e) ?? json({ ok: false, error: "Rate limit" }, 429);
+  }
   await loadBotRuntime().catch(() => undefined);
   const account = await resolveKey(request);
-  if (!account) return json({ ok: false, error: "Invalid or missing API key" }, 401);
+  if (!account) {
+    try {
+      rl.consume(`reseller-badkey:ip:${ip}`, 20, 10 * rl.MINUTE);
+    } catch (e) {
+      return tooMany(e) ?? json({ ok: false, error: "Rate limit" }, 429);
+    }
+    return json({ ok: false, error: "Invalid or missing API key" }, 401);
+  }
   const { uid, user } = account;
+  try {
+    rl.consume(`reseller:key:${uid}`, 60, rl.MINUTE);
+    if (path === "order" && request.method === "POST") rl.consume(`reseller-order:key:${uid}`, 20, rl.MINUTE);
+  } catch (e) {
+    return tooMany(e) ?? json({ ok: false, error: "Rate limit" }, 429);
+  }
 
   if (path === "me") {
     return json({

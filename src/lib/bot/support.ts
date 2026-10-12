@@ -227,6 +227,12 @@ async function execTool(chatId: number, uid: string, name: string, args: any): P
     const address = c.depositAddress || defaultDepositAddress();
     if (!address) return "Error: no deposit wallet is set up.";
     if (await dbGet<any>(`deposits/${hash}`)) return "This transaction was already used.";
+    try {
+      const rl = await import("@/lib/rate-limit.server");
+      rl.limitBy("bot-deposit", String(uid), 10, rl.MINUTE);
+    } catch (e) {
+      return `Not checked: ${(e as Error).message}`;
+    }
     const res = await verifyDepositAnyChain(hash, address);
     if (!res.ok) return `Not credited: ${res.message}`;
     const u = (await dbGet<any>(`users/${uid}`)) || {};

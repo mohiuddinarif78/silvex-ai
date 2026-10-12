@@ -254,6 +254,13 @@ export async function handleText(
     const already = await dbGet<any>(`deposits/${hash}`);
     if (already) return say(chatId, "This transaction has already been used.", backHome);
 
+    try {
+      const rl = await import("@/lib/rate-limit.server");
+      rl.limitBy("bot-deposit", String(chatId), 10, rl.MINUTE);
+    } catch (e) {
+      return say(chatId, `⏳ ${(e as Error).message}`, backHome);
+    }
+
     await say(chatId, "🔎 Checking the blockchain…");
     let res;
     try {

@@ -67,6 +67,17 @@ function validate(input: SendInput): SendInput {
 export const sendSmtpMail = createServerFn({ method: "POST" })
   .inputValidator(validate)
   .handler(async ({ data }) => {
+    const rl = await import("./rate-limit.server");
+    const { requireStaff } = await import("./auth-guard.server");
+    const isStaff = await requireStaff().then(() => true, () => false);
+    if (!isStaff) {
+      try {
+        rl.limitByIp("mail", 20, 10 * rl.MINUTE);
+        rl.limitBy("mail-to", data.to.toLowerCase(), 5, 10 * rl.MINUTE);
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message };
+      }
+    }
     const { smtp } = data;
     try {
       let WorkerMailer: typeof import("worker-mailer").WorkerMailer;

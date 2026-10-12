@@ -28,7 +28,10 @@ export const createDepositLink = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     // The link credits whoever it names, so name the verified caller only.
     const { requireCaller } = await import("./auth-guard.server");
+    const rl = await import("./rate-limit.server");
+    rl.limitByIp("rzp-link", 20, rl.MINUTE);
     const who = await requireCaller();
+    rl.limitBy("rzp-link", who.uid, 5, rl.MINUTE);
     const { createPaymentLink } = await import("./razorpay.server");
     return createPaymentLink({ ...data, uid: who.uid, source: "web" });
   });
@@ -44,6 +47,8 @@ export const checkDepositLink = createServerFn({ method: "POST" })
     return { linkId };
   })
   .handler(async ({ data }) => {
+    const rl = await import("./rate-limit.server");
+    rl.limitByIp("rzp-check", 30, rl.MINUTE);
     const { settlePaymentLink } = await import("./razorpay.server");
     return settlePaymentLink(data.linkId);
   });

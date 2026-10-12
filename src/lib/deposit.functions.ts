@@ -25,6 +25,8 @@ export const checkDeposit = createServerFn({ method: "POST" })
   })
 
   .handler(async ({ data }): Promise<DepositCheck> => {
+    const rl = await import("./rate-limit.server");
+    rl.limitByIp("deposit-check", 20, rl.MINUTE);
     const { verifyDepositOnChain } = await import("./deposit.server");
     return verifyDepositOnChain(data.hash, data.chain, data.address);
   });

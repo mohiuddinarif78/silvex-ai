@@ -34,7 +34,11 @@ export const notifyTelegramOrder = createServerFn({ method: "POST" })
     // (admin delivery) may notify the buyer of any order.
     const { requireCaller } = await import("./auth-guard.server");
     const who = await requireCaller();
-    if (!who.staff) data = { ...data, uid: who.uid };
+    if (!who.staff) {
+      const rl = await import("./rate-limit.server");
+      rl.limitBy("notify-order", who.uid, 10, rl.MINUTE);
+      data = { ...data, uid: who.uid };
+    }
     try {
       const { dbGet, money, notifyOwners, tg, siteUrl, loadBotRuntime } = await import("./telegram.server");
       await loadBotRuntime();

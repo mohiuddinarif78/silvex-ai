@@ -18,7 +18,10 @@ export const checkoutCart = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { verifyIdToken, webCheckout } = await import("./wallet.server");
     try {
+      const rl = await import("./rate-limit.server");
+      rl.limitByIp("checkout", 30, rl.MINUTE);
       const who = await verifyIdToken(data.idToken);
+      rl.limitBy("checkout", who.uid, 10, rl.MINUTE);
       return await webCheckout(who.uid, who.email, data);
     } catch (err) {
       return { ok: false as const, error: (err as Error).message || "Checkout failed" };
@@ -30,7 +33,10 @@ export const cancelMyOrder = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { verifyIdToken, cancelOrder } = await import("./wallet.server");
     try {
+      const rl = await import("./rate-limit.server");
+      rl.limitByIp("cancel", 30, rl.MINUTE);
       const who = await verifyIdToken(data.idToken);
+      rl.limitBy("cancel", who.uid, 10, rl.MINUTE);
       return await cancelOrder(who.uid, data.orderId);
     } catch (err) {
       return { ok: false as const, error: (err as Error).message };
@@ -51,7 +57,10 @@ export const submitCryptoDeposit = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { verifyIdToken, creditCryptoDeposit } = await import("./wallet.server");
     try {
+      const rl = await import("./rate-limit.server");
+      rl.limitByIp("deposit", 30, rl.MINUTE);
       const who = await verifyIdToken(data.idToken);
+      rl.limitBy("deposit", who.uid, 10, rl.MINUTE);
       return await creditCryptoDeposit(who.uid, who.email, data);
     } catch (err) {
       return { ok: false as const, message: (err as Error).message || "Could not check that transaction" };
@@ -63,7 +72,10 @@ export const claimSignupReferral = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { verifyIdToken, applySignupReferral } = await import("./wallet.server");
     try {
+      const rl = await import("./rate-limit.server");
+      rl.limitByIp("referral", 10, rl.HOUR);
       const who = await verifyIdToken(data.idToken);
+      rl.limitBy("referral", who.uid, 5, rl.HOUR);
       return await applySignupReferral(who.uid, data.name, data.code);
     } catch {
       return { ok: false as const };

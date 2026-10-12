@@ -85,9 +85,12 @@ export const cloudWhoami = createServerFn({ method: "POST" }).handler(async () =
 export const prepareLegacyLogin = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ email: z.string().email().max(200) }).parse(d))
   .handler(async ({ data }) => {
+    const email = data.email.trim().toLowerCase();
+    const rl = await import("./rate-limit.server");
+    rl.limitByIp("legacy-login", 10, 10 * rl.MINUTE);
+    rl.limitBy("legacy-login", email, 3, 10 * rl.MINUTE);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const db = supabaseAdmin as any;
-    const email = data.email.trim().toLowerCase();
     const { data: cust } = await db.from("customers").select("id, auth_user_id").ilike("email", email).limit(1).maybeSingle();
     if (!cust || cust.auth_user_id) return { legacy: false };
     const password = crypto.randomUUID() + crypto.randomUUID();
