@@ -57,3 +57,22 @@ than one replica.
 Old supplier API keys (Qamify, MMO Store, Safwan Tiger, CupponHub, Eklas) were
 removed from source but remain in git history. They belong to the previous
 owner, who should revoke them at each shop.
+
+
+## 5. Razorpay: credit no more than the rupees actually paid (Low)
+
+**Problem.** The Razorpay webhook (`src/routes/api/public/razorpay/webhook.ts`)
+and the "check payment" path (`settlePaymentLink` in `src/lib/razorpay.server.ts`)
+credit the dollar amount written in the payment's `notes.usd`, only falling back
+to `rupees paid ÷ inrPerDollar` when that note is missing. Notes are labels; the
+store never checks them against the money received.
+
+Safe today: only the store's server creates payment links, the rupee amount
+always matches `notes.usd`, and partial payments are off. It would matter if the
+Razorpay account ever receives payments another way (a Payment Page or form whose
+fields become notes, another app on the same account, a link created by hand in
+the dashboard). Example: a ₹10 payment carrying `usd: 500` would credit $500.
+
+**Fix.** Credit `min(notes.usd, inrPaid ÷ inrPerDollar × 1.02)`. The ~2% margin
+avoids shortchanging customers if the exchange rate changes between creating the
+link and paying. Apply in both places; normal deposits are unchanged.
