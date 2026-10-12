@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { dbGet, dbPatch, dbPush, dbPut, siteUrl, loadBotRuntime } from "@/lib/telegram.server";
+import { dbGet, dbPatch, dbPush, dbPut, dbTransact, dbCreateIfAbsent, siteUrl, loadBotRuntime } from "@/lib/telegram.server";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +29,11 @@ function unitPrice(p: any) {
   const a = Number(p?.apiPrice);
   return a > 0 ? a : Number(p?.price || 0);
 }
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Safe key for a DB path segment (idempotency keys may contain odd chars). */
+const encodeKey = (k: string) => k.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
 
 function publicProduct(id: string, p: any) {
   const stock = Array.isArray(p.stock) ? p.stock.filter(Boolean).length : 0;
@@ -119,16 +124,47 @@ async function handle(request: Request, splat: string): Promise<Response> {
     if (!p) return json({ ok: false, error: "Product not found" }, 404);
     if (p.soldOut) return json({ ok: false, error: "Product is out of stock" }, 409);
 
-    const price = unitPrice(p) * qty;
-    const balance = Number(user.wallet || 0);
-    if (balance < price) {
-      return json({ ok: false, error: "Insufficient balance", balance, required: price }, 402);
+    const price = round2(unitPrice(p) * qty);
+
+    // Idempotency: a client may send a stable key to make retries safe. We claim
+    // it once; a duplicate is rejected instead of charging again.
+    const idemKey = String(body?.idempotencyKey || body?.orderId || "").trim().slice(0, 80);
+    const orderId = "API" + Date.now();
+    if (idemKey) {
+      const claimed = await dbCreateIfAbsent(`apiIdempotency/${encodeKey(idemKey)}`, {
+        orderId,
+        uid,
+        date: new Date().toISOString(),
+      });
+      if (!claimed) {
+        return json(
+          { ok: false, error: "Duplicate request (idempotencyKey already used)" },
+          409,
+        );
+      }
+    }
+
+    // Take the money FIRST, atomically. The guard runs inside the transaction so
+    // concurrent requests cannot both pass an insufficient-funds check and
+    // overspend (fixes the previous read-check-write race).
+    const paid = await dbTransact<number>(`users/${uid}/wallet`, (w) => {
+      const cur = Number(w) || 0;
+      if (cur < price) return undefined; // abort: not enough balance
+      return round2(cur - price);
+    });
+    if (paid === undefined) {
+      // Release the idempotency claim so the caller can retry after topping up.
+      if (idemKey) await dbPut(`apiIdempotency/${encodeKey(idemKey)}`, null).catch(() => undefined);
+      return json(
+        { ok: false, error: "Insufficient balance", balance: Number(user.wallet || 0), required: price },
+        402,
+      );
     }
 
     const delivered: { title: string; content: string }[] = [];
     let complete = false;
-    if (p.delivery === "supplier") {
-      try {
+    try {
+      if (p.delivery === "supplier") {
         const { supplierBuy } = await import("@/lib/supplier.server");
         const items = await supplierBuy(
           p.supplierId ?? "",
@@ -139,40 +175,53 @@ async function handle(request: Request, splat: string): Promise<Response> {
         for (const content of items) {
           await dbPush(`usedStock/${productId}`, {
             content,
-            orderId: "",
+            orderId,
             email: user.email || `api:${uid}`,
             date: new Date().toISOString(),
           });
           delivered.push({ title: p.title || "Item", content });
         }
-        complete = delivered.length > 0;
-      } catch {
-        complete = false;
-      }
-    } else if (p.delivery === "repeat" && p.link) {
-      for (let i = 0; i < qty; i++) delivered.push({ title: p.title || "Item", content: p.link });
-      complete = true;
-    } else if (p.delivery === "auto") {
-      const stock: string[] = Array.isArray(p.stock) ? p.stock.filter(Boolean) : [];
-      if (stock.length >= qty) {
-        const taken = stock.slice(0, qty);
-        await dbPut(`products/${productId}/stock`, stock.slice(qty));
-        for (const content of taken) {
-          await dbPush(`usedStock/${productId}`, {
-            content,
-            orderId: "",
-            email: user.email || `api:${uid}`,
-            date: new Date().toISOString(),
-          });
-          delivered.push({ title: p.title || "Item", content });
-        }
+        complete = delivered.length >= qty;
+      } else if (p.delivery === "repeat" && p.link) {
+        for (let i = 0; i < qty; i++) delivered.push({ title: p.title || "Item", content: p.link });
         complete = true;
+      } else if (p.delivery === "auto") {
+        // Atomically claim stock so two orders can never take the same items.
+        let taken: string[] = [];
+        await dbTransact<string[]>(`products/${productId}/stock`, (cur) => {
+          const list = Array.isArray(cur) ? cur.filter(Boolean) : [];
+          if (list.length < qty) return undefined; // abort: not enough stock
+          taken = list.slice(0, qty);
+          return list.slice(qty);
+        });
+        if (taken.length === qty) {
+          for (const content of taken) {
+            await dbPush(`usedStock/${productId}`, {
+              content,
+              orderId,
+              email: user.email || `api:${uid}`,
+              date: new Date().toISOString(),
+            });
+            delivered.push({ title: p.title || "Item", content });
+          }
+          complete = true;
+        }
       }
+    } catch {
+      complete = false;
     }
 
+    // If nothing was delivered, refund the full charge atomically and stop.
+    if (!delivered.length) {
+      await dbTransact<number>(`users/${uid}/wallet`, (w) => round2((Number(w) || 0) + price));
+      if (idemKey) await dbPut(`apiIdempotency/${encodeKey(idemKey)}`, null).catch(() => undefined);
+      return json(
+        { ok: false, error: "Delivery failed, you were not charged", refunded: price },
+        502,
+      );
+    }
 
-    const orderId = "API" + Date.now();
-    await dbPut(`users/${uid}/wallet`, balance - price);
+    const balance = paid; // balance after the atomic debit, for the messages below
     await dbPut(`orders/${orderId}`, {
       orderId,
       uid,
@@ -217,7 +266,7 @@ async function handle(request: Request, splat: string): Promise<Response> {
           `🔑 <b>New API order</b>\n` +
           `${title} ×${qty}\n` +
           `Charged: $${price.toFixed(2)}\n` +
-          `Balance: $${(balance - price).toFixed(2)}\n` +
+          `Balance: $${balance.toFixed(2)}\n` +
           `Status: ${complete ? "Delivered ✅" : "Pending ⏳"}\n` +
           `Order: <code>${orderId}</code>`,
         parse_mode: "HTML",
@@ -235,7 +284,7 @@ async function handle(request: Request, splat: string): Promise<Response> {
       orderId,
       status: complete ? "Completed" : "Pending",
       charged: price,
-      balance: balance - price,
+      balance: balance,
       delivered,
     });
   }

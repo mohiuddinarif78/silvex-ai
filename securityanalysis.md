@@ -18,7 +18,7 @@ analysis. Current status of each finding:
 |----|-------|----------|--------|
 | F-1 | Legacy Firebase rules grant admin + wallet-write | Critical | **Fixed** — `database.rules.json` deleted; app runs only on Supabase + `cloud-access.server.ts`. (Firebase RTDB itself should still be confirmed decommissioned — it has reportedly hit its free-plan limit and is being abandoned.) |
 | F-2 | Service-role key committed in `.env` | Critical | **Partially fixed** — `.env` removed from the repo and git-ignored; `.env.example` added with names only. **The previously committed key still exists in git history and MUST be rotated in Supabase.** |
-| F-3 | Reseller API non-atomic wallet debit (overspend) | High | **Open** — `src/routes/api/public/reseller/$.ts` still does read-check-`dbPut`. Not yet fixed. |
+| F-3 | Reseller API non-atomic wallet debit (overspend) | High | **Fixed** — `reseller/$.ts` now debits via an atomic `dbTransact` CAS with the insufficient-funds guard inside the transaction, claims `auto` stock atomically, refunds in full when delivery yields nothing, and supports an optional `idempotencyKey` claimed via `dbCreateIfAbsent` to make retries safe. (Minor residual: a *partial* supplier delivery still charges full price — tracked separately, not an overspend.) |
 | F-4 | Inconsistent owner identity across codebase | High | **Fixed** — owner/revoked lists now come from env (`OWNER_EMAILS` / `REVOKED_ADMIN_EMAILS`), single source via `owners.ts`; hardcoded emails removed from `StoreContext`, `push.server.ts`, and the deleted Firebase rules. The DB signup trigger grants the owner role to the configured owner email. |
 | F-5 | Public `binance-check` leaks config/status | Medium | **Open** — endpoint unchanged. |
 | F-6 | Crypto deposit verification weaknesses | Medium | **Open** — unchanged. |
@@ -36,7 +36,7 @@ by their owner at each supplier shop).
    value is still recoverable from git history.
 2. **Confirm the Firebase RTDB is decommissioned** so no legacy client-writable
    money path exists (F-1).
-3. **Fix the reseller API overspend** (F-3) and the full-row wallet clamp (F-8).
+3. **Fix the full-row wallet clamp** (F-8). (Reseller overspend F-3 is now fixed.)
 4. Rotate the exposed supplier API keys at each shop.
 
 ---
