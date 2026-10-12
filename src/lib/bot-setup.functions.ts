@@ -7,6 +7,8 @@ import { createServerFn } from "@tanstack/react-start";
 export const connectTelegramBot = createServerFn({ method: "POST" })
   .inputValidator((input: { token?: string; siteUrl?: string }) => input ?? {})
   .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    await requireStaff();
     const { applyBotConfig, loadBotRuntime, telegramWebhookSecret, siteUrl, tg } = await import(
       "./telegram.server"
     );

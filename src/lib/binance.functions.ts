@@ -26,8 +26,11 @@ export const verifyBinancePay = createServerFn({ method: "POST" })
     return { uid, ref };
   })
   .handler(async ({ data }) => {
+    // Credit only the verified signed-in account, never a uid sent by the browser.
+    const { requireCaller } = await import("./auth-guard.server");
+    const who = await requireCaller();
     const { settleBinancePay } = await import("./binance.server");
-    return settleBinancePay(data.uid, data.ref);
+    return settleBinancePay(who.uid, data.ref);
   });
 
 /**
@@ -43,6 +46,9 @@ export const verifyBinanceDeposit = createServerFn({ method: "POST" })
     return { uid, txId };
   })
   .handler(async ({ data }) => {
+    // Credit only the verified signed-in account, never a uid sent by the browser.
+    const { requireCaller } = await import("./auth-guard.server");
+    const who = await requireCaller();
     const { settleBinanceDeposit } = await import("./binance.server");
-    return settleBinanceDeposit(data.uid, data.txId);
+    return settleBinanceDeposit(who.uid, data.txId);
   });

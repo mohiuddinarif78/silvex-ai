@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 
 /** Supplier catalogue, shown in the admin panel when linking a product. */
 export const fetchSupplierCatalogue = createServerFn({ method: "GET" }).handler(async () => {
+  const { requireStaff } = await import("./auth-guard.server");
+  await requireStaff();
   const { supplierProducts, supplierBalance, cleanText } = await import("./supplier.server");
   try {
     const [products, balance] = await Promise.all([
@@ -20,6 +22,8 @@ export const fetchSupplierCatalogue = createServerFn({ method: "GET" }).handler(
 
 /** Refresh prices and stock of all linked products from the supplier. */
 export const syncSupplier = createServerFn({ method: "POST" }).handler(async () => {
+  const { requireStaff } = await import("./auth-guard.server");
+  await requireStaff();
   const { syncSupplierProducts } = await import("./supplier.server");
   try {
     return { ok: true as const, ...(await syncSupplierProducts()) };
@@ -40,6 +44,8 @@ export const autoSyncSupplier = createServerFn({ method: "POST" }).handler(async
 
 /** Just the supplier wallet balance, shown in the admin panel. */
 export const fetchSupplierBalance = createServerFn({ method: "GET" }).handler(async () => {
+  const { requireStaff } = await import("./auth-guard.server");
+  await requireStaff();
   const { supplierBalance } = await import("./supplier.server");
   try {
     return { ok: true as const, ...(await supplierBalance()) };

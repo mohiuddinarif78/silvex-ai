@@ -26,8 +26,11 @@ export const createDepositLink = createServerFn({ method: "POST" })
     },
   )
   .handler(async ({ data }) => {
+    // The link credits whoever it names, so name the verified caller only.
+    const { requireCaller } = await import("./auth-guard.server");
+    const who = await requireCaller();
     const { createPaymentLink } = await import("./razorpay.server");
-    return createPaymentLink({ ...data, source: "web" });
+    return createPaymentLink({ ...data, uid: who.uid, source: "web" });
   });
 
 /**

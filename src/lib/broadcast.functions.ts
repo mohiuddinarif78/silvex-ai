@@ -27,6 +27,8 @@ function validate(input: Input): Input {
 export const broadcastProductEvent = createServerFn({ method: "POST" })
   .inputValidator(validate)
   .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    await requireStaff();
     if (!data.productId) return { ok: false as const, sent: 0, total: 0, error: "no product" };
     try {
       const { announce } = await import("./broadcast.server");

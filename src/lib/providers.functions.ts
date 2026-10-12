@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 
 /** All reseller API providers with their settings and live balance. */
 export const listProviders = createServerFn({ method: "GET" }).handler(async () => {
+  const { requireStaff } = await import("./auth-guard.server");
+  await requireStaff();
   const { PROVIDERS, providerConfig, providerBalance } = await import("./providers.server");
   const ids = PROVIDERS.map((p) => p.id);
   const rows = await Promise.all(
@@ -37,6 +39,8 @@ export const saveProvider = createServerFn({ method: "POST" })
     }) => input,
   )
   .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    await requireStaff();
     const { saveProviderConfig } = await import("./providers.server");
     try {
       const { id, ...patch } = data;
@@ -51,6 +55,8 @@ export const saveProvider = createServerFn({ method: "POST" })
 export const importProviderProducts = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => input)
   .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    await requireStaff();
     const { importProvider } = await import("./providers.server");
     try {
       return { ok: true as const, ...(await importProvider(data.id)) };
@@ -67,6 +73,8 @@ export const importProviderProducts = createServerFn({ method: "POST" })
 
 /** Delete imported API products that are not on the keep list. */
 export const pruneApiProducts = createServerFn({ method: "POST" }).handler(async () => {
+  const { requireStaff } = await import("./auth-guard.server");
+  await requireStaff();
   const { pruneImportedProducts } = await import("./providers.server");
   try {
     return { ok: true as const, ...(await pruneImportedProducts()) };
@@ -79,6 +87,8 @@ export const pruneApiProducts = createServerFn({ method: "POST" }).handler(async
 export const fetchProviderProducts = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => input)
   .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    await requireStaff();
     const { providerProducts } = await import("./providers.server");
     try {
       return { ok: true as const, products: await providerProducts(data.id) };

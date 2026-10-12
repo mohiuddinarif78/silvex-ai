@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 
 /** Read the Railway account, its projects and the state of every service. */
 export const railwayStatus = createServerFn({ method: "POST" }).handler(async () => {
+  const { requireStaff } = await import("./auth-guard.server");
+  await requireStaff();
   try {
     const { loadProjects, railwayToken } = await import("./railway.server");
     if (!railwayToken()) return { ok: false as const, error: "Railway token is not set yet." };
@@ -22,6 +24,8 @@ export const railwayAction = createServerFn({ method: "POST" })
     action: input?.action === "restart" ? ("restart" as const) : ("redeploy" as const),
   }))
   .handler(async ({ data }) => {
+    const { requireStaff } = await import("./auth-guard.server");
+    await requireStaff();
     if (!data.serviceId || !data.environmentId)
       return { ok: false as const, error: "Pick a service first." };
     try {

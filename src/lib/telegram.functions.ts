@@ -30,6 +30,11 @@ function validate(input: OrderNotice): OrderNotice {
 export const notifyTelegramOrder = createServerFn({ method: "POST" })
   .inputValidator(validate)
   .handler(async ({ data }) => {
+    // Signed-in only. Customers may only message their own linked chat; staff
+    // (admin delivery) may notify the buyer of any order.
+    const { requireCaller } = await import("./auth-guard.server");
+    const who = await requireCaller();
+    if (!who.staff) data = { ...data, uid: who.uid };
     try {
       const { dbGet, money, notifyOwners, tg, siteUrl, loadBotRuntime } = await import("./telegram.server");
       await loadBotRuntime();
