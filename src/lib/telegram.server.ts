@@ -1,14 +1,8 @@
-import { cloudCreateIfAbsent, cloudGet, cloudPatch, cloudPush, cloudPut, cloudTransact, usingCloud } from "./cloud-db.server";
-/** Server-only helpers for the Telegram bot + Firebase Realtime Database REST access. */
+import { cloudCreateIfAbsent, cloudGet, cloudPatch, cloudPush, cloudPut, cloudTransact } from "./cloud-db.server";
+/** Server-only helpers for the Telegram bot + database access (Supabase via cloud-db.server). */
 import { createHash, timingSafeEqual } from "crypto";
 
 import { hasPremiumEmoji, htmlToEntities, stripPremiumEmojiTags, type TgEntity } from "./telegram-entities";
-
-/** Database URL: set FIREBASE_DATABASE_URL when remixing to another project. */
-const DEFAULT_RTDB_URL = "https://silvex-ai-default-rtdb.firebaseio.com";
-export const rtdbUrl = () =>
-  (process.env["FIREBASE_DATABASE_URL"] || DEFAULT_RTDB_URL).replace(/\/+$/, "");
-export const RTDB_URL = DEFAULT_RTDB_URL;
 
 /**
  * Store-specific values. Settings (site_settings/config) always win; these env
@@ -312,13 +306,10 @@ export function safeEqual(a: string, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-/* ---------------- Realtime Database (REST) ---------------- */
+/* ---------------- Database (Firebase-style paths over Supabase) ---------------- */
 
 export async function dbGet<T = any>(path: string): Promise<T | null> {
-  if (usingCloud()) return cloudGet<T>(path);
-  const res = await fetch(`${rtdbUrl()}/${path}.json`);
-  if (!res.ok) return null;
-  return (await res.json()) as T | null;
+  return cloudGet<T>(path);
 }
 
 let runtimeLoadedAt = 0;
@@ -350,54 +341,20 @@ export async function loadBotRuntime(force = false): Promise<void> {
 
 
 
-async function dbWrite(method: string, path: string, value: unknown): Promise<void> {
-  // print=silent: the database replies with nothing instead of echoing the data back.
-  const res = await fetch(`${rtdbUrl()}/${path}.json?print=silent`, {
-    method,
-    body: JSON.stringify(value),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Database write failed (${res.status}): ${detail.slice(0, 200)}`);
-  }
-}
-
 export async function dbPut(path: string, value: unknown): Promise<void> {
-  if (usingCloud()) return cloudPut(path, value);
-  await dbWrite("PUT", path, value);
+  return cloudPut(path, value);
 }
 
 /**
- * Atomically creates a database value only when that path is still empty.
- * Firebase's ETag precondition makes this safe when webhooks and button taps
- * reach different server instances at exactly the same time.
+ * Atomically creates a database value only when that path is still empty, so
+ * webhooks and button taps arriving at the same moment can claim it only once.
  */
 export async function dbCreateIfAbsent(path: string, value: unknown): Promise<boolean> {
-  if (usingCloud()) return cloudCreateIfAbsent(path, value);
-  const url = `${rtdbUrl()}/${path}.json`;
-  const current = await fetch(url, { headers: { "X-Firebase-ETag": "true" } });
-  if (!current.ok) throw new Error(`Database claim read failed (${current.status})`);
-  const existing = await current.json();
-  if (existing !== null) return false;
-  const etag = current.headers.get("etag");
-  if (!etag) throw new Error("Database claim did not return an ETag");
-
-  // Firebase rejects print=silent together with if-match, so no query here.
-  const claimed = await fetch(url, {
-    method: "PUT",
-    headers: { "If-Match": etag, "Content-Type": "application/json" },
-    body: JSON.stringify(value),
-  });
-  if (claimed.status === 412) return false;
-  if (!claimed.ok) {
-    const detail = await claimed.text().catch(() => "");
-    throw new Error(`Database claim failed (${claimed.status}): ${detail.slice(0, 200)}`);
-  }
-  return true;
+  return cloudCreateIfAbsent(path, value);
 }
 
 /**
- * Read-modify-write that is safe across parallel requests (Firebase ETag).
+ * Read-modify-write that is safe across parallel requests (compare-and-swap).
  * `update` returns the new value, or `undefined` to abort without writing.
  * Returns the written value, or `undefined` when aborted.
  */
@@ -406,50 +363,20 @@ export async function dbTransact<T, R = T>(
   update: (current: T | null) => R | undefined,
   tries = 8,
 ): Promise<R | undefined> {
-  if (usingCloud()) return cloudTransact<T, R>(path, update, tries);
-  const url = `${rtdbUrl()}/${path}.json`;
-  for (let i = 0; i < tries; i++) {
-    const cur = await fetch(url, { headers: { "X-Firebase-ETag": "true" } });
-    if (!cur.ok) throw new Error(`Database read failed (${cur.status})`);
-    const etag = cur.headers.get("etag");
-    const value = (await cur.json()) as T | null;
-    const next = update(value);
-    if (next === undefined) return undefined;
-    if (!etag) throw new Error("Database did not return an ETag");
-    const res = await fetch(url, {
-      method: "PUT",
-      headers: { "If-Match": etag, "Content-Type": "application/json" },
-      body: JSON.stringify(next),
-    });
-    if (res.status === 412) {
-      await new Promise((r) => setTimeout(r, 40 + Math.random() * 120));
-      continue;
-    }
-    if (!res.ok) throw new Error(`Database write failed (${res.status})`);
-    return next;
-  }
-  throw new Error("Busy — please try again");
+  return cloudTransact<T, R>(path, update, tries);
 }
 
 
 
 export async function dbPatch(path: string, value: Record<string, unknown>): Promise<void> {
-  if (usingCloud()) return cloudPatch(path, value);
-  await dbWrite("PATCH", path, value);
+  return cloudPatch(path, value);
 }
 
 export async function dbPush(path: string, value: unknown): Promise<void> {
   // Every wallet change writes a history entry — tell the bot admins about it.
   const hm = /^users\/([^/]+)\/history$/.exec(path);
   if (hm && value && typeof value === "object") void notifyBalanceChange(hm[1]!, value as any).catch(() => undefined);
-  if (usingCloud()) {
-    await cloudPush(path, value);
-    return;
-  }
-  await fetch(`${rtdbUrl()}/${path}.json?print=silent`, {
-    method: "POST",
-    body: JSON.stringify(value),
-  });
+  await cloudPush(path, value);
 }
 
 export function money(n: number): string {

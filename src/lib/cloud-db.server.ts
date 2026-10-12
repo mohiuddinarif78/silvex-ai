@@ -576,7 +576,3 @@ export async function cloudTransact<T, R = T>(
   throw new Error("Busy — please try again");
 }
 
-/** Which data store the server uses. Flip DATA_BACKEND=cloud at switch-over. */
-export function usingCloud(): boolean {
-  return true; // Firebase is retired; Lovable Cloud is the only database.
-}
