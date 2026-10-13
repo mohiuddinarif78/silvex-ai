@@ -519,6 +519,11 @@ export async function cloudPatch(path: string, value: Record<string, unknown>): 
   await Promise.all(
     [...groups].map(([id, sets]) =>
       cloudTransact(id, (cur: Json) => {
+        // A partial patch must never resurrect a products/orders row that was
+        // deleted meanwhile (e.g. a supplier sync patch racing an admin delete).
+        // Recreating from patch fields alone leaves a titleless "ghost" row.
+        // These records are only ever created with full data via push/set.
+        if (cur === null && (id.startsWith("products/") || id.startsWith("orders/"))) return undefined;
         let next = cur;
         for (const [rest, v] of sets) next = setAt(next, rest, v === undefined ? null : v);
         return next;
