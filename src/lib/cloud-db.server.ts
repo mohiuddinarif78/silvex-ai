@@ -312,8 +312,10 @@ async function readNode(top: string, key: string): Promise<Node> {
   return row ? { value: row.value, stamp: row.updated_at } : { value: null, stamp: null };
 }
 
-/** Writes a whole node. With `expect`, only succeeds if the row is unchanged. */
-async function writeNode(top: string, key: string, value: Json, expect?: { stamp: string | null }): Promise<boolean> {
+/** Writes a whole node. With `expect`, only succeeds if the row is unchanged.
+ *  `prev` is the value just read (transaction path); it lets us skip the
+ *  expensive history/alerts re-sync when those sub-collections didn't change. */
+async function writeNode(top: string, key: string, value: Json, expect?: { stamp: string | null }, prev?: Json): Promise<boolean> {
   const db = await sb();
   const now = new Date().toISOString();
   value = prune(value);
@@ -355,30 +357,42 @@ async function writeNode(top: string, key: string, value: Json, expect?: { stamp
     if (error) throw new Error(`Cloud write failed: ${error.message}`);
   }
 
-  if (top === "users") await syncUserChildren(key, value);
+  if (top === "users") await syncUserChildren(key, value, prev);
   if (top === "products") await syncStock(key, stockList(value.stock));
   return true;
 }
 
-async function syncUserChildren(uid: string, u: any): Promise<void> {
+async function syncUserChildren(uid: string, u: any, prev?: any): Promise<void> {
   const db = await sb();
   const cid = await customerId(uid);
   if (!cid) return;
-  const want = u.history && typeof u.history === "object" ? u.history : {};
-  const { data: have } = await db.from("wallet_history").select("id, legacy_id").eq("customer_id", cid);
-  const haveKeys = new Map<string, string>((have || []).map((h: any) => [h.legacy_id || h.id, h.id]));
-  const add = Object.entries(want).filter(([k]) => !haveKeys.has(k));
-  const drop = [...haveKeys].filter(([k]) => !(k in want)).map(([, id]) => id);
-  if (add.length) await db.from("wallet_history").insert(add.map(([k, e]) => historyRow(cid, k, e)));
-  if (drop.length) await db.from("wallet_history").delete().in("id", drop);
 
-  const wantAlerts = u.alerts && typeof u.alerts === "object" ? u.alerts : {};
-  const { data: haveA } = await db.from("customer_alerts").select("id").eq("customer_id", cid);
-  const haveAlertIds = new Set((haveA || []).map((a: any) => a.id));
-  const newAlerts = Object.entries(wantAlerts).filter(([k, a]: any) => !haveAlertIds.has(k) && a?.msg);
-  const goneAlerts = [...haveAlertIds].filter((id) => !(String(id) in wantAlerts));
-  if (newAlerts.length) await db.from("customer_alerts").insert(newAlerts.map(([, a]: any) => ({ customer_id: cid, msg: a.msg, created_at: toIso(a.date) || new Date().toISOString() })));
-  if (goneAlerts.length) await db.from("customer_alerts").delete().in("id", goneAlerts);
+  // Skip each sub-collection when the written value left it byte-identical to
+  // what was just read (the common case: a transaction/patch touched only a
+  // scalar like wallet). This avoids two SELECT-all queries per write.
+  const histUnchanged = prev !== undefined && JSON.stringify(prev?.history ?? null) === JSON.stringify(u?.history ?? null);
+  const alertsUnchanged = prev !== undefined && JSON.stringify(prev?.alerts ?? null) === JSON.stringify(u?.alerts ?? null);
+  if (histUnchanged && alertsUnchanged) return;
+
+  if (!histUnchanged) {
+    const want = u.history && typeof u.history === "object" ? u.history : {};
+    const { data: have } = await db.from("wallet_history").select("id, legacy_id").eq("customer_id", cid);
+    const haveKeys = new Map<string, string>((have || []).map((h: any) => [h.legacy_id || h.id, h.id]));
+    const add = Object.entries(want).filter(([k]) => !haveKeys.has(k));
+    const drop = [...haveKeys].filter(([k]) => !(k in want)).map(([, id]) => id);
+    if (add.length) await db.from("wallet_history").insert(add.map(([k, e]) => historyRow(cid, k, e)));
+    if (drop.length) await db.from("wallet_history").delete().in("id", drop);
+  }
+
+  if (!alertsUnchanged) {
+    const wantAlerts = u.alerts && typeof u.alerts === "object" ? u.alerts : {};
+    const { data: haveA } = await db.from("customer_alerts").select("id").eq("customer_id", cid);
+    const haveAlertIds = new Set((haveA || []).map((a: any) => a.id));
+    const newAlerts = Object.entries(wantAlerts).filter(([k, a]: any) => !haveAlertIds.has(k) && a?.msg);
+    const goneAlerts = [...haveAlertIds].filter((id) => !(String(id) in wantAlerts));
+    if (newAlerts.length) await db.from("customer_alerts").insert(newAlerts.map(([, a]: any) => ({ customer_id: cid, msg: a.msg, created_at: toIso(a.date) || new Date().toISOString() })));
+    if (goneAlerts.length) await db.from("customer_alerts").delete().in("id", goneAlerts);
+  }
 }
 
 function historyRow(cid: string, key: string, e: any): any {
@@ -575,9 +589,127 @@ export async function cloudTransact<T, R = T>(
     const next = update(cur);
     if (next === undefined) return undefined;
     const whole = rest.length ? setAt(node.value, rest, next === null ? null : next) : next;
-    if (await writeNode(top, key, whole, { stamp: node.stamp })) return next;
+    if (await writeNode(top, key, whole, { stamp: node.stamp }, node.value)) return next;
     await new Promise((r) => setTimeout(r, 40 + Math.random() * 120));
   }
   throw new Error("Busy — please try again");
+}
+
+/* ---------------- targeted indexed reads (avoid whole-collection scans) ---------------- */
+
+/**
+ * One customer's orders, newest first, in the same Firebase-shaped map the
+ * callers expect ({ "<orderId>": { ...order } }). Uses orders_customer_idx
+ * instead of reading every order in the store and filtering in JS.
+ */
+export async function ordersByUser(uid: string, limit = 50): Promise<Record<string, Json>> {
+  const db = await sb();
+  const cid = await customerId(uid);
+  if (!cid) return {};
+  const { data, error } = await db
+    .from("orders")
+    .select("*, customers(legacy_uid)")
+    .eq("customer_id", cid)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Cloud read failed: ${error.message}`);
+  return Object.fromEntries((data || []).map((r: any) => [r.id, rowToOrder(r)]));
+}
+
+/**
+ * The most recent N orders across the store, newest first, Firebase-shaped.
+ * Uses orders_created_idx. For admin/reseller views that only need recents.
+ */
+export async function recentOrders(limit = 100): Promise<Record<string, Json>> {
+  const db = await sb();
+  const { data, error } = await db
+    .from("orders")
+    .select("*, customers(legacy_uid)")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Cloud read failed: ${error.message}`);
+  return Object.fromEntries((data || []).map((r: any) => [r.id, rowToOrder(r)]));
+}
+
+/**
+ * Resolve a Telegram chat id to its store uid via the telegram_chat_id UNIQUE
+ * index — O(1) instead of scanning every customer. Returns null when unlinked.
+ */
+export async function uidByChatId(chatId: number | string): Promise<string | null> {
+  const n = parseInt(String(chatId).trim(), 10);
+  if (!Number.isFinite(n)) return null;
+  const db = await sb();
+  const { data } = await db.from("customers").select("legacy_uid").eq("telegram_chat_id", n).maybeSingle();
+  return data?.legacy_uid ?? null;
+}
+
+/**
+ * Resolve a referral code to its owner's uid via the ref_code UNIQUE index.
+ * Case-insensitive match (codes are stored upper-case). Null when unknown.
+ */
+export async function uidByRefCode(code: string): Promise<string | null> {
+  const clean = String(code || "").trim();
+  if (!clean) return null;
+  const db = await sb();
+  // Codes compared case-insensitively, matching the old JS scan (toUpperCase).
+  const { data } = await db.from("customers").select("legacy_uid").ilike("ref_code", clean).limit(1).maybeSingle();
+  return data?.legacy_uid ?? null;
+}
+
+/** How many customers used a given referral code (case-insensitive). Uses a
+ *  COUNT query instead of hydrating the whole customer list. */
+export async function countByUsedRef(code: string): Promise<number> {
+  const clean = String(code || "").trim();
+  if (!clean) return 0;
+  const db = await sb();
+  const { count } = await db.from("customers").select("id", { count: "exact", head: true }).ilike("used_ref", clean);
+  return count || 0;
+}
+
+/**
+ * All linked Telegram chat ids (for broadcasts) without hydrating full user
+ * objects, history and alerts. Returns numeric chat ids only.
+ */
+export async function telegramChatIds(): Promise<number[]> {
+  const db = await sb();
+  const rows = await fetchAll((f, t) =>
+    db.from("customers").select("telegram_chat_id").not("telegram_chat_id", "is", null).order("id").range(f, t),
+  );
+  return rows.map((r: any) => Number(r.telegram_chat_id)).filter((n: number) => Number.isFinite(n) && n > 0);
+}
+
+/**
+ * Atomic wallet change via the wallet_adjust() RPC: one row-locked UPDATE plus
+ * the matching wallet_history row, in a single statement. Replaces the
+ * read-modify-write-CAS + separate history push. Returns the new balance, or
+ * `undefined` when the change would make the balance negative (nothing is
+ * written). Throws only on unexpected database errors.
+ */
+export async function walletAdjust(
+  uid: string,
+  delta: number,
+  type: string,
+  desc: string,
+  by?: string | null,
+  extra?: Record<string, unknown>,
+): Promise<number | undefined> {
+  const db = await sb();
+  const cid = await customerId(uid);
+  if (!cid) return undefined;
+  const { data, error } = await db.rpc("wallet_adjust", {
+    _customer: cid,
+    _delta: delta,
+    _type: type,
+    _desc: desc,
+    _by: by ?? null,
+    _extra: extra ?? {},
+  });
+  if (error) {
+    // The RPC raises 'insufficient_balance' when the result would go negative;
+    // surface that as "not written" (undefined), like the old CAS abort.
+    if (/insufficient_balance/i.test(error.message)) return undefined;
+    throw new Error(`Wallet adjust failed: ${error.message}`);
+  }
+  return Number(data);
 }
 

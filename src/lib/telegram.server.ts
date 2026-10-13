@@ -312,6 +312,59 @@ export async function dbGet<T = any>(path: string): Promise<T | null> {
   return cloudGet<T>(path);
 }
 
+/** One customer's orders, newest first (indexed; no whole-collection scan). */
+export async function dbOrdersByUser(uid: string, limit = 50): Promise<Record<string, any>> {
+  const { ordersByUser } = await import("./cloud-db.server");
+  return ordersByUser(uid, limit);
+}
+
+/** Most recent N orders store-wide, newest first (indexed). */
+export async function dbRecentOrders(limit = 100): Promise<Record<string, any>> {
+  const { recentOrders } = await import("./cloud-db.server");
+  return recentOrders(limit);
+}
+
+/** Resolve a Telegram chat id to a store uid via the unique index (O(1)). */
+export async function dbUidByChatId(chatId: number | string): Promise<string | null> {
+  const { uidByChatId } = await import("./cloud-db.server");
+  return uidByChatId(chatId);
+}
+
+/** Resolve a referral code to its owner's uid via the ref_code index. */
+export async function dbUidByRefCode(code: string): Promise<string | null> {
+  const { uidByRefCode } = await import("./cloud-db.server");
+  return uidByRefCode(code);
+}
+
+/** Count customers who used a given referral code (COUNT query, no hydration). */
+export async function dbCountByUsedRef(code: string): Promise<number> {
+  const { countByUsedRef } = await import("./cloud-db.server");
+  return countByUsedRef(code);
+}
+
+/** All linked Telegram chat ids, without hydrating full user objects. */
+export async function dbTelegramChatIds(): Promise<number[]> {
+  const { telegramChatIds } = await import("./cloud-db.server");
+  return telegramChatIds();
+}
+
+/**
+ * Atomic wallet credit/debit + history in one RPC call. Returns the new
+ * balance, or `undefined` when the change would go negative (nothing written).
+ * Prefer this over read-modify-write when the amount and reason are known.
+ */
+export async function dbWalletAdjust(
+  uid: string,
+  delta: number,
+  type: string,
+  desc: string,
+  by?: string | null,
+  extra?: Record<string, unknown>,
+): Promise<number | undefined> {
+  const { walletAdjust } = await import("./cloud-db.server");
+  return walletAdjust(uid, delta, type, desc, by, extra);
+}
+
 let runtimeLoadedAt = 0;
 let runtimeLoading: Promise<void> | null = null;
 

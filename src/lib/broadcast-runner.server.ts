@@ -3,7 +3,7 @@
  * waves under Telegram's ~30 msg/s limit, retries rate-limited/network
  * failures until done, and keeps a live progress log in the admin chat(s).
  */
-import { broadcastPausedUntil, dbGet, interactiveLoad, ownerIds, tg } from "./telegram.server";
+import { broadcastPausedUntil, dbGet, dbTelegramChatIds, interactiveLoad, ownerIds, tg } from "./telegram.server";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const WAVE_MS = 1000;
@@ -17,19 +17,16 @@ const MAX_ROUNDS = 6; // retry rounds for transient failures
 
 /** Every Telegram chat that has ever used the bot or linked an account. */
 export async function allBotUserIds(): Promise<number[]> {
-  const [tu, users] = await Promise.all([
+  const [tu, chatIds] = await Promise.all([
     dbGet<Record<string, unknown>>("telegramUsers").catch(() => null),
-    dbGet<Record<string, { telegramChatId?: number | string }>>("users").catch(() => null),
+    dbTelegramChatIds().catch(() => [] as number[]),
   ]);
   const set = new Set<number>();
   for (const k of Object.keys(tu || {})) {
     const n = Number(k);
     if (n) set.add(n);
   }
-  for (const u of Object.values(users || {})) {
-    const n = Number(u?.telegramChatId);
-    if (n) set.add(n);
-  }
+  for (const n of chatIds) if (n) set.add(n);
   return [...set];
 }
 

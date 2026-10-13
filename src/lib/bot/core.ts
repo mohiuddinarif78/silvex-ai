@@ -3,6 +3,7 @@ import {
   dbGet,
   dbPatch,
   dbPut,
+  dbUidByChatId,
   tg,
   ownerIds,
   applyBotConfig,
@@ -465,7 +466,10 @@ const linkCache = new Map<number, string>();
 export async function linkedUid(chatId: number): Promise<string | null> {
   const hit = linkCache.get(chatId);
   if (hit) return hit;
-  const v = await dbGet<string>(`telegramLinks/${chatId}`);
+  // Prefer the indexed customers.telegram_chat_id lookup (O(1)); fall back to
+  // the legacy telegramLinks kv row for any link not yet mirrored on the column.
+  let v = await dbUidByChatId(chatId);
+  if (!v) v = await dbGet<string>(`telegramLinks/${chatId}`);
   if (v) linkCache.set(chatId, v);
   return v;
 }

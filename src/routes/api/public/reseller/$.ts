@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { dbGet, dbPatch, dbPush, dbPut, dbTransact, dbCreateIfAbsent, siteUrl, loadBotRuntime } from "@/lib/telegram.server";
+import { dbGet, dbOrdersByUser, dbPatch, dbPush, dbPut, dbTransact, dbCreateIfAbsent, siteUrl, loadBotRuntime } from "@/lib/telegram.server";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -129,11 +129,10 @@ async function handle(request: Request, splat: string): Promise<Response> {
   }
 
   if (path === "orders" && request.method === "GET") {
-    const all = (await dbGet<Record<string, any>>("orders")) || {};
+    const all = (await dbOrdersByUser(uid, 100)) || {};
     return json({
       ok: true,
       orders: Object.entries(all)
-        .filter(([, o]) => o?.uid === uid)
         .map(([id, o]) => ({
           orderId: id,
           status: o.status,

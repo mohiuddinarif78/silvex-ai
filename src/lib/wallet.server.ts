@@ -3,7 +3,7 @@
  * checking the customer's login. Customers can no longer change their own
  * balance from the browser — the database rules block it.
  */
-import { dbCreateIfAbsent, dbGet, dbPatch, dbPush, dbPut, dbTransact, loadBotRuntime } from "./telegram.server";
+import { dbCreateIfAbsent, dbGet, dbPatch, dbPush, dbPut, dbTransact, dbWalletAdjust, loadBotRuntime } from "./telegram.server";
 
 const round = (n: number) => Math.round(n * 100) / 100;
 const now = () => new Date().toISOString();
@@ -29,12 +29,7 @@ export async function walletAdd(uid: string, delta: number): Promise<number | un
   });
 }
 
-/** Adds (or removes, with a negative amount) money atomically. */
-async function addToWallet(uid: string, amount: number): Promise<number> {
-  const out = await walletAdd(uid, amount);
-  return Number(out ?? 0);
-}
-
+/** Writes a wallet-history line (used by the purchase debit path). */
 async function history(uid: string, type: string, amount: number, desc: string) {
   await dbPush(`users/${uid}/history`, { type, amount, desc, date: now() });
 }
@@ -53,9 +48,8 @@ export async function claimAndCreditDeposit(
 ): Promise<number | null> {
   const claimed = await dbCreateIfAbsent(`deposits/${hash}`, { ...record, status: "Credited" });
   if (!claimed) return null;
-  const balance = await addToWallet(uid, amount);
-  await history(uid, "Deposit", amount, desc);
-  return balance;
+  const balance = await dbWalletAdjust(uid, amount, "Deposit", desc);
+  return Number(balance ?? 0);
 }
 
 /**
@@ -77,13 +71,12 @@ export async function decideWalletRequest(
 
   const amount = Number(claimed.amount) || 0;
   const delta = claimed.type === "Deposit" ? amount : -amount;
-  const balance = await walletAdd(String(claimed.uid), delta);
+  const balance = await dbWalletAdjust(String(claimed.uid), delta, claimed.type, `${claimed.type} approved`);
   if (balance === undefined) {
     // Not enough money for a withdrawal: put the request back untouched.
     await dbPatch(`requests/${id}`, { status: "Pending" });
     return { ok: false, error: "User has insufficient balance." };
   }
-  await history(String(claimed.uid), claimed.type, amount, `${claimed.type} approved`);
   return { ok: true, request: claimed, delta };
 }
 
@@ -101,8 +94,7 @@ export async function adminCancelAndRefund(
   });
   if (!out) return { ok: false, refund: 0, uid: "" };
   if (uid && refund > 0) {
-    await addToWallet(uid, refund);
-    await history(uid, "Refund", refund, `Cancelled ${orderId.slice(-4)}`);
+    await dbWalletAdjust(uid, refund, "Refund", `Cancelled ${orderId.slice(-4)}`);
   }
   return { ok: true, refund, uid };
 }
@@ -123,7 +115,7 @@ export async function addReferralCommission(refBy: string, buyerUid: string, tot
     return round(earned + c);
   });
   if (out === undefined || !(commission > 0)) return 0;
-  await addToWallet(refBy, commission);
+  await dbWalletAdjust(refBy, commission, "Referral commission", "From a friend's purchase");
   return commission;
 }
 
@@ -220,8 +212,7 @@ export async function webCheckout(uid: string, email: string, input: CheckoutInp
   }
 
   for (const r of refunds) {
-    await addToWallet(uid, r.amount);
-    await history(uid, "Refund", r.amount, `Partial delivery: ${r.title} (${r.missing} undelivered)`);
+    await dbWalletAdjust(uid, r.amount, "Refund", `Partial delivery: ${r.title} (${r.missing} undelivered)`);
   }
 
   const status = delivered.length && allDelivered ? "Completed" : "Pending";
@@ -251,8 +242,7 @@ export async function webCheckout(uid: string, email: string, input: CheckoutInp
   // Referral commission for whoever invited this buyer (capped per friend).
   try {
     const refBy = String(profile?.refBy || "");
-    const commission = await addReferralCommission(refBy, uid, total);
-    if (commission > 0) await history(refBy, "Referral commission", commission, "From a friend's purchase");
+    await addReferralCommission(refBy, uid, total);
   } catch {
     /* never block an order on commission */
   }
@@ -280,8 +270,7 @@ export async function cancelOrder(uid: string, orderId: string) {
   });
   if (!out) throw new Error("This order can no longer be cancelled.");
   if (refund > 0) {
-    await addToWallet(uid, refund);
-    await history(uid, "Refund", refund, `Cancelled ${orderId.slice(-4)}`);
+    await dbWalletAdjust(uid, refund, "Refund", `Cancelled ${orderId.slice(-4)}`);
   }
   return { ok: true as const, refund };
 }
@@ -317,8 +306,7 @@ export async function creditCryptoDeposit(
   if (!claimed) return { ok: false as const, message: "This transaction has already been used." };
 
   if (res.status === "credited") {
-    await addToWallet(uid, res.amount);
-    await history(uid, "Deposit", res.amount, `${res.symbol} on ${res.chain}`);
+    await dbWalletAdjust(uid, res.amount, "Deposit", `${res.symbol} on ${res.chain}`);
     return { ok: true as const, credited: true, amount: res.amount, message: "" };
   }
   await dbPush("requests", { ...base, type: "Deposit", utr: input.hash, status: "Pending" });
@@ -332,15 +320,13 @@ export async function applySignupReferral(uid: string, name: string, code: strin
   if (!clean) return { ok: false as const };
   const me = (await dbGet<any>(`users/${uid}`)) || {};
   if (me.refBonusDone) return { ok: false as const };
-  const all = (await dbGet<Record<string, any>>("users")) || {};
-  const key = Object.keys(all).find((k) => String(all[k]?.myRefCode || "").toUpperCase() === clean);
+  const { uidByRefCode } = await import("./cloud-db.server");
+  const key = await uidByRefCode(clean);
   if (!key || key === uid) return { ok: false as const };
   const fresh = await dbTransact<any>(`users/${uid}/refBonusDone`, (v) => (v ? undefined : true));
   if (!fresh) return { ok: false as const };
   await dbPatch(`users/${uid}`, { refBy: key, usedRef: clean });
-  await addToWallet(key, 20);
-  await history(key, "Referral", 20, `User ${name || "a friend"} joined`);
-  await addToWallet(uid, 20);
-  await history(uid, "Referral", 20, "Signup bonus");
+  await dbWalletAdjust(key, 20, "Referral", `User ${name || "a friend"} joined`);
+  await dbWalletAdjust(uid, 20, "Referral", "Signup bonus");
   return { ok: true as const };
 }

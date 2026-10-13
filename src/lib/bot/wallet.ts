@@ -8,11 +8,11 @@ import {
   referralRate,
   websiteReferralLink,
 } from "@/lib/referral";
-import { dbGet, dbPatch, dbPush, dbPut, money, notifyGroup, siteUrl, tg } from "@/lib/telegram.server";
+import { dbCountByUsedRef, dbGet, dbOrdersByUser, dbPatch, dbPush, dbPut, dbUidByRefCode, money, notifyGroup, siteUrl, tg } from "@/lib/telegram.server";
 import { be } from "@/lib/emoji.server";
 import { resellerApiDocs } from "@/lib/reseller-docs";
 import { tgSendDocument } from "@/lib/bot/delivery-files.server";
-import { allUsers, backHome, cfg, channelLink, ensureUser, invalidateUsers, say, setState } from "./core";
+import { backHome, cfg, channelLink, ensureUser, invalidateUsers, say, setState } from "./core";
 
 
 export async function sendWallet(chatId: number) {
@@ -290,9 +290,8 @@ export async function sendApiDocsFile(chatId: number) {
 
 export async function sendOrders(chatId: number) {
   const uid = await ensureUser(chatId);
-  const all = (await dbGet<Record<string, any>>("orders")) || {};
+  const all = (await dbOrdersByUser(uid, 8)) || {};
   const mine = Object.values(all)
-    .filter((o: any) => o?.uid === uid)
     .sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)))
     .slice(0, 8);
   if (!mine.length) return say(chatId, "You have no orders yet.", backHome);
@@ -387,17 +386,14 @@ export async function applyStartReferral(uid: string, rawCode: string) {
   if (!code) return;
   const me = (await dbGet<any>(`users/${uid}`)) || {};
   if (me.refBy || me.usedRef || me.myRefCode === code) return;
-  const users = await allUsers();
-  const hit = Object.entries(users).find(
-    ([id, u]: [string, any]) => id !== uid && String(u?.myRefCode || "").toUpperCase() === code,
-  );
-  if (!hit) return;
-  await dbPatch(`users/${uid}`, { usedRef: code, refBy: hit[0] });
+  const refBy = await dbUidByRefCode(code);
+  if (!refBy || refBy === uid) return;
+  await dbPatch(`users/${uid}`, { usedRef: code, refBy });
   invalidateUsers();
   void notifyGroup(
     `🎉 <b>New Referral Success!</b>\n\n` +
       `👤 User: <code>${uid}</code>\n` +
-      `📌 Referred by: <code>${hit[0]}</code>\n` +
+      `📌 Referred by: <code>${refBy}</code>\n` +
       `🤩 Code: <code>${code}</code>`,
   ).catch(() => undefined);
 }
@@ -406,10 +402,7 @@ export async function sendRefer(chatId: number) {
   const uid = await ensureUser(chatId);
   const u = (await dbGet<any>(`users/${uid}`)) || {};
   const code = u.myRefCode || "-";
-  const users = await allUsers();
-  const invited = Object.values(users).filter(
-    (x: any) => String(x?.usedRef || "").toUpperCase() === String(code).toUpperCase(),
-  ).length;
+  const invited = code && code !== "-" ? await dbCountByUsedRef(code) : 0;
   const history = Object.values((await dbGet<Record<string, any>>(`users/${uid}/history`)) || {});
   const e = referralEarnings(history as any);
   await say(
@@ -457,16 +450,17 @@ export async function sendSupport(chatId: number) {
 export async function sendStatement(chatId: number, uid?: string) {
   const { buildStatementCsv } = await import("@/lib/statement");
   const target = uid ?? null;
-  const allOrders = Object.values((await dbGet<Record<string, any>>("orders")) || {});
   let users: any[];
+  let orders: any[];
   if (target) {
     const u = (await dbGet<any>(`users/${target}`)) || {};
     users = [{ uid: target, ...u }];
+    orders = Object.values((await dbOrdersByUser(target, 1000)) || {});
   } else {
     const all = (await dbGet<Record<string, any>>("users")) || {};
     users = Object.entries(all).map(([id, u]) => ({ uid: id, ...(u || {}) }));
+    orders = Object.values((await dbGet<Record<string, any>>("orders")) || {});
   }
-  const orders = target ? allOrders.filter((o: any) => o?.uid === target) : allOrders;
   const csv = buildStatementCsv(users, orders, target ? `Statement for ${users[0].email || target}` : "Full store statement");
   const bytes = new TextEncoder().encode("\ufeff" + csv);
   await tgSendDocument(chatId, `statement-${target ? "account" : "store"}-${new Date().toISOString().slice(0, 10)}.csv`, bytes, "text/csv;charset=utf-8",
