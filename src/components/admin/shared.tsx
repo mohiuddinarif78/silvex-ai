@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { get, onValue, push, ref, remove, set, update } from "@/lib/fb/database";
 import { useStore, isOwnerEmail, type Product, type Category } from "@/context/StoreContext";
 import { fileToCompressedDataUrl } from "@/lib/image-upload";
@@ -7,9 +9,13 @@ import { exportOrdersCsv, exportOrdersPdf, type ExportRow } from "@/lib/export-o
 import { sendSmtpMail } from "@/lib/mail.functions";
 import { deliveryBlock, emailShell, sendMail } from "@/lib/mailer";
 import { notifyTelegramOrder } from "@/lib/telegram.functions";
+import { cn } from "@/lib/utils";
+import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 
 
-export const input = "w-full rounded-xl border border-border bg-muted/60 p-2.5 text-sm outline-none";
+export const input =
+  "flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";
 export const SECTIONS = {
   Analysis: ["Dashboard", "Orders"],
   Management: ["Requests", "Products", "API shops", "Coupons", "Users", "Bot buttons", "Hosting", "Settings"],
@@ -46,23 +52,55 @@ export type RequestRow = {
   date: string;
 };
 
-export function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+export function Stat({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  delta,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon?: LucideIcon;
+  /** Percent change vs previous period; positive = up (green). */
+  delta?: number;
+}) {
+  const hasDelta = typeof delta === "number" && Number.isFinite(delta);
+  const up = (delta ?? 0) >= 0;
   return (
-    <div className="rounded-2xl border border-border bg-card p-3">
-      <p className="text-[11px] font-bold text-muted-foreground">{label}</p>
-      <p className="text-xl font-black">{value}</p>
-      {sub ? <p className="text-[10px] text-muted-foreground">{sub}</p> : null}
-    </div>
+    <Card className="gap-0 py-0">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">{label}</p>
+          {Icon ? (
+            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Icon className="size-4" />
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1.5 font-display text-2xl font-bold tabular-nums">{value}</p>
+        <div className="mt-0.5 flex items-center gap-1.5">
+          {hasDelta ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-0.5 text-xs font-medium",
+                up ? "text-success" : "text-destructive",
+              )}
+            >
+              {up ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}
+              {Math.abs(delta!).toFixed(0)}%
+            </span>
+          ) : null}
+          {sub ? <p className="text-xs text-muted-foreground">{sub}</p> : null}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 export function Empty({ text }: { text: string }) {
-
-  return (
-    <p className="rounded-2xl bg-card p-6 text-center text-xs text-muted-foreground shadow-sm">
-      {text}
-    </p>
-  );
+  return <EmptyState title={text} className="py-10" />;
 }
 
 export function ImageField({

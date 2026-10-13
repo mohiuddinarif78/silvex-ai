@@ -1,10 +1,20 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Clock, Headphones, ShieldCheck, Zap } from "lucide-react";
 
 import { useStore } from "@/context/StoreContext";
-import { ProductCard } from "@/components/store/ProductCard";
+import { ProductCard, ProductCardSkeleton, ProductGrid } from "@/components/store/ProductCard";
 import { Emo } from "@/components/store/Emo";
 import { SupportButtons } from "@/components/store/SupportButtons";
+import { MarqueeBar } from "@/components/store/MarqueeBar";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+} from "@/components/ui/carousel";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -76,7 +86,7 @@ function useCountdown(endTime?: number) {
 }
 
 function Home() {
-  const { products: allProducts, config, banner, flashSale, categories, addToCart, emoji, siteName } =
+  const { products: allProducts, banner, flashSale, categories, addToCart, ready, siteName } =
     useStore();
   const products = useMemo(() => allProducts.filter((p) => !p.hidden && !p.hideWeb), [allProducts]);
   const navigate = useNavigate();
@@ -85,120 +95,223 @@ function Home() {
   const saleActive = Boolean(flashSale?.endTime && flashSale.endTime > Date.now());
   const saleProduct = products.find((p) => p.id === flashSale?.pid);
   const countdown = useCountdown(flashSale?.endTime);
-
+  const loading = !ready && products.length === 0;
 
   const trending = useMemo(
-    () =>
-      [...products]
-        .sort((a, b) => (b.salesCount ?? 0) - (a.salesCount ?? 0))
-        .slice(0, 6),
+    () => [...products].sort((a, b) => (b.salesCount ?? 0) - (a.salesCount ?? 0)).slice(0, 10),
     [products],
   );
 
+  const trust = [
+    { icon: Zap, title: "Instant delivery", desc: "Most orders land in seconds." },
+    { icon: ShieldCheck, title: "Secure wallet", desc: "Protected balance & payments." },
+    { icon: Headphones, title: "Real support", desc: "We reply on Telegram & WhatsApp." },
+  ];
+
   return (
-    <div className="fade-in">
-      <div className="mb-5 overflow-hidden rounded-xl bg-card px-3 py-2 text-xs font-medium text-muted-foreground shadow-sm">
-        <div className="marquee whitespace-nowrap">
-          {config.marquee || "Welcome to Silvex AI! 🔥 Get the best deals here."}
-        </div>
-      </div>
+    <div className="fade-in space-y-8">
+      <MarqueeBar />
 
-
-      <div className="mb-6 rounded-3xl bg-gradient-to-br from-indigo-600 to-purple-600 p-6 text-white shadow-lg">
-        <p className="text-[10px] font-bold uppercase tracking-widest opacity-80">{siteName}</p>
-        <h1 className="mt-2 text-3xl font-black leading-tight">{banner.title || "Digital Store"}</h1>
-        <p className="mt-1 text-xs opacity-90">
-          {banner.desc || "Cheapest rates & instant delivery"}
-        </p>
-        <button
-          onClick={() => navigate({ to: "/products" })}
-          className="mt-4 rounded-xl bg-white px-5 py-2 text-xs font-bold text-indigo-700"
-        >
-          Shop now
-        </button>
-      </div>
-
-      {saleActive && saleProduct ? (
-        <div className="mb-6 rounded-2xl border border-destructive/20 bg-card p-4 shadow-lg">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs font-black text-destructive"><Emo k="web.flash" /> FLASH SALE</span>
-            <span className="rounded bg-destructive/10 px-2 py-1 font-mono text-xs font-bold text-destructive">
-              {countdown}
-            </span>
+      {/* Hero + flash sale */}
+      <section className="grid gap-4 lg:grid-cols-3">
+        <div className="relative overflow-hidden rounded-3xl gradient-hero p-6 text-white shadow-md sm:p-8 lg:col-span-2">
+          <div className="relative z-10 max-w-lg">
+            <Badge className="bg-white/20 text-white backdrop-blur-sm">{siteName}</Badge>
+            <h1 className="font-display mt-3 text-3xl font-bold leading-tight sm:text-4xl">
+              {banner.title || "Premium digital products"}
+            </h1>
+            <p className="mt-2 text-sm text-white/90 sm:text-base">
+              {banner.desc || "Cheapest rates with instant delivery."}
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button
+                size="lg"
+                onClick={() => navigate({ to: "/products" })}
+                className="bg-white text-primary hover:bg-white/90"
+              >
+                Shop now
+                <ArrowRight className="size-4" />
+              </Button>
+              {banner.link ? (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  asChild
+                  className="border-white/40 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                >
+                  <a href={banner.link}>Learn more</a>
+                </Button>
+              ) : null}
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="line-clamp-1 text-sm font-bold">{saleProduct.title}</h3>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-xl font-black">${flashSale?.price}</span>
-                <span className="text-xs text-muted-foreground line-through">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -right-16 -top-16 size-56 rounded-full bg-white/10 blur-2xl"
+          />
+        </div>
+
+        {saleActive && saleProduct ? (
+          <div className="flex flex-col justify-between rounded-3xl border border-destructive/20 bg-card p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-destructive">
+                <Emo k="web.flash" /> Flash sale
+              </span>
+              <span className="flex items-center gap-1 rounded-lg bg-destructive/10 px-2 py-1 font-mono text-xs font-bold tabular-nums text-destructive">
+                <Clock className="size-3" />
+                {countdown}
+              </span>
+            </div>
+            <div className="mt-3">
+              <h3 className="line-clamp-2 text-sm font-semibold">{saleProduct.title}</h3>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <span className="font-display text-2xl font-bold tabular-nums">${flashSale?.price}</span>
+                <span className="text-sm text-muted-foreground line-through tabular-nums">
                   ${saleProduct.price}
                 </span>
               </div>
             </div>
-            <button
+            <Button
+              variant="destructive"
+              className="mt-4 w-full"
               onClick={() => addToCart(saleProduct, Number(flashSale?.price))}
-              className="rounded-xl bg-destructive px-5 py-2 text-xs font-bold text-destructive-foreground"
             >
-              BUY
-            </button>
+              Buy now
+            </Button>
           </div>
-        </div>
-      ) : null}
+        ) : (
+          <div className="hidden flex-col justify-center gap-3 rounded-3xl border border-border bg-card p-6 shadow-sm lg:flex">
+            {trust.map((t) => {
+              const Icon = t.icon;
+              return (
+                <div key={t.title} className="flex items-start gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Icon className="size-[18px]" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">{t.title}</p>
+                    <p className="text-xs text-muted-foreground">{t.desc}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
+      {/* Search */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           navigate({ to: "/products", search: { q: search } });
         }}
-        className="mb-6 flex items-center gap-2 rounded-xl bg-card p-3 shadow-sm"
+        className="flex items-center gap-2 rounded-xl border border-input bg-card px-3 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"
       >
-        <span><Emo k="web.search" /></span>
+        <Emo k="web.search" />
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search products..."
-          className="w-full bg-transparent text-sm outline-none"
+          placeholder="Search products…"
+          aria-label="Search products"
+          className="h-11 w-full bg-transparent text-sm outline-none"
         />
+        <Button type="submit" size="sm" className="my-1.5">
+          Search
+        </Button>
       </form>
 
-      <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-muted-foreground">
-        Categories
-      </h2>
-      <div className="mb-6 grid grid-cols-4 gap-3 md:grid-cols-8">
-        {categories.map((c) => (
-          <button
-            key={c.label}
-            onClick={() => navigate({ to: "/products", search: { category: c.label } })}
-            className="flex flex-col items-center gap-1 rounded-2xl bg-card p-3 text-[11px] font-bold shadow-sm"
-          >
-            <span className="text-xl">{c.icon}</span>
-            {c.label}
-          </button>
-        ))}
-      </div>
-
-      <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-muted-foreground">
-        Trending
-      </h2>
-      {products.length === 0 ? (
-        <p className="rounded-2xl bg-card p-6 text-center text-xs text-muted-foreground shadow-sm">
-          No products yet. An admin can add them from the admin panel.
-        </p>
-      ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {trending.map((p) => (
-            <ProductCard key={p.id} product={p} />
+      {/* Category chips */}
+      <section>
+        <h2 className="mb-3 font-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Categories
+        </h2>
+        <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+          {categories.map((c) => (
+            <button
+              key={c.label}
+              onClick={() => navigate({ to: "/products", search: { category: c.label } })}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-2 text-sm font-medium shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/5 active:scale-95 motion-reduce:active:scale-100"
+            >
+              <span className="text-base">{c.icon}</span>
+              {c.label}
+            </button>
           ))}
         </div>
-      )}
+      </section>
 
-      <button
-        onClick={() => navigate({ to: "/products" })}
-        className="mt-5 w-full rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 px-5 py-3 text-sm font-bold text-white shadow-lg active:scale-[0.98]"
-      >
-        View All Products
-      </button>
+      {/* Trending */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Trending
+          </h2>
+          <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/products" })}>
+            View all
+            <ArrowRight className="size-4" />
+          </Button>
+        </div>
+
+        {loading ? (
+          <>
+            {/* Mobile: carousel skeleton */}
+            <div className="grid grid-cols-2 gap-3 sm:hidden">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <ProductCardSkeleton key={i} />
+              ))}
+            </div>
+            <ProductGrid className="hidden sm:grid">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <ProductCardSkeleton key={i} />
+              ))}
+            </ProductGrid>
+          </>
+        ) : products.length === 0 ? (
+          <EmptyState
+            icon={Zap}
+            title="No products yet"
+            description="An admin can add products from the admin panel. Check back soon."
+          />
+        ) : (
+          <>
+            {/* Mobile: embla carousel */}
+            <Carousel opts={{ align: "start", dragFree: true }} className="sm:hidden">
+              <CarouselContent>
+                {trending.map((p) => (
+                  <CarouselItem key={p.id} className="basis-[46%]">
+                    <ProductCard product={p} />
+                  </CarouselItem>
+                ))}
+              </CarouselContent>
+            </Carousel>
+            {/* Tablet+ : grid */}
+            <ProductGrid className="hidden sm:grid">
+              {trending.slice(0, 10).map((p) => (
+                <ProductCard key={p.id} product={p} />
+              ))}
+            </ProductGrid>
+          </>
+        )}
+      </section>
+
+      {/* Trust strip (mobile / when sale card took the desktop slot) */}
+      <section className="grid gap-3 sm:grid-cols-3">
+        {trust.map((t) => {
+          const Icon = t.icon;
+          return (
+            <div
+              key={t.title}
+              className="flex items-start gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm"
+            >
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Icon className="size-[18px]" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold">{t.title}</p>
+                <p className="text-xs text-muted-foreground">{t.desc}</p>
+              </div>
+            </div>
+          );
+        })}
+      </section>
 
       <SupportButtons />
     </div>

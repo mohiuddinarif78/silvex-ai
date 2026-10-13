@@ -12,6 +12,16 @@ import { notifyTelegramOrder } from "@/lib/telegram.functions";
 import { input, Stat, Empty, ImageField, emptyProduct, type OrderRow } from "@/components/admin/shared";
 import { fetchSupplierCatalogue, fetchSupplierBalance, syncSupplier } from "@/lib/supplier.functions";
 import { broadcastProductEvent } from "@/lib/broadcast.functions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type SupItem = { id: string | number; name: string; price: number; stock: number; unlimited_stock?: boolean; description?: string };
 
@@ -21,6 +31,8 @@ export function ProductsAdmin({ products }: { products: Product[] }) {
   const [bulk, setBulk] = useState("");
   const [search, setSearch] = useState("");
   const [viewing, setViewing] = useState<string | null>(null);
+  const [confirmClearStock, setConfirmClearStock] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [supplier, setSupplier] = useState<SupItem[]>([]);
   const [supBusy, setSupBusy] = useState(false);
   const [supBal, setSupBal] = useState<{ balance: number; currency: string } | null>(null);
@@ -379,10 +391,7 @@ export function ProductsAdmin({ products }: { products: Product[] }) {
               </button>
               {stockCount ? (
                 <button
-                  onClick={async () => {
-                    if (db && form.id && confirm("Clear all stock?"))
-                      await set(ref(db, `products/${form.id}/stock`), null);
-                  }}
+                  onClick={() => setConfirmClearStock(true)}
                   className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-bold text-destructive"
                 >
                   Clear stock
@@ -479,21 +488,7 @@ export function ProductsAdmin({ products }: { products: Product[] }) {
                     </span>
                   ) : null}
                   <button
-                    onClick={async () => {
-                      if (!db) return;
-                      if (
-                        !confirm(
-                          p.locked
-                            ? "Delete this API product? It will not come back on the next import."
-                            : "Delete this product?",
-                        )
-                      )
-                        return;
-                      // Remember deleted API items so importing again does not re-add them.
-                      if (p.locked) await update(ref(db, "site_settings/apiDeleted"), { [p.id]: true });
-                      await remove(ref(db, `products/${p.id}`));
-                      notify("Product deleted");
-                    }}
+                    onClick={() => setDeleteTarget(p)}
                     className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-bold text-destructive"
                   >
                     Delete
@@ -586,6 +581,47 @@ export function ProductsAdmin({ products }: { products: Product[] }) {
         })}
       </div>
 
+      <AlertDialog open={confirmClearStock} onOpenChange={setConfirmClearStock}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all stock?</AlertDialogTitle>
+            <AlertDialogDescription>Every available stock line for this product will be removed. This cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={async () => { if (db && form.id) await set(ref(db, `products/${form.id}/stock`), null); }}>Clear stock</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.locked ? "this API product" : "this product"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget?.locked
+                ? "It will not come back on the next import. This cannot be undone."
+                : "This permanently removes the product. This cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async () => {
+                const p = deleteTarget;
+                if (!db || !p) return;
+                if (p.locked) await update(ref(db, "site_settings/apiDeleted"), { [p.id]: true });
+                await remove(ref(db, `products/${p.id}`));
+                notify("Product deleted");
+                setDeleteTarget(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,9 +1,29 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Copy,
+  Download,
+  Gift,
+  KeyRound,
+  LogOut,
+  Lightbulb,
+  Mail,
+  PackageCheck,
+  Receipt,
+  ShieldCheck,
+  Smartphone,
+  Users,
+  Wallet,
+} from "lucide-react";
 import { equalTo, get, orderByChild, query, ref, update } from "@/lib/fb/database";
-import { EmailAuthProvider, reauthenticateWithCredential, signOut, updatePassword, verifyBeforeUpdateEmail } from "@/lib/fb/auth";
+import {
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  signOut,
+  updatePassword,
+  verifyBeforeUpdateEmail,
+} from "@/lib/fb/auth";
 import { useStore } from "@/context/StoreContext";
-import { Emo } from "@/components/store/Emo";
 import {
   botReferralLink,
   referralCap,
@@ -12,6 +32,17 @@ import {
   websiteReferralLink,
 } from "@/lib/referral";
 import { isAppInstalled, startAppInstall } from "@/lib/pwa-install";
+
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Separator } from "@/components/ui/separator";
 
 export const Route = createFileRoute("/profile")({
   head: () => ({
@@ -27,17 +58,12 @@ export const Route = createFileRoute("/profile")({
   component: ProfilePage,
 });
 
-const inputCls =
-  "w-full rounded-xl border border-border bg-card px-4 py-3 text-sm outline-none focus:border-primary";
-
 function ProfilePage() {
-  const { auth, db, user, profile, wallet, isAdmin, openModal, showSuccess, notify, emoji } = useStore();
+  const { auth, db, user, profile, wallet, isAdmin, openModal, showSuccess, notify } = useStore();
   const [phone, setPhone] = useState(profile?.phone ?? "");
-  const [showPass, setShowPass] = useState(false);
   const [curPass, setCurPass] = useState("");
   const [newPass, setNewPass] = useState("");
   const [passBusy, setPassBusy] = useState(false);
-  const [showMail, setShowMail] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [mailPass, setMailPass] = useState("");
   const [mailBusy, setMailBusy] = useState(false);
@@ -61,15 +87,13 @@ function ProfilePage() {
 
   if (!user) {
     return (
-      <div className="mx-auto w-full max-w-md px-4 py-16 md:max-w-3xl text-center">
-        <h1 className="mb-2 text-xl font-bold">My profile</h1>
-        <p className="mb-6 text-sm text-muted-foreground">Log in to see your profile.</p>
-        <button
-          onClick={() => openModal("auth")}
-          className="rounded-xl bg-primary px-6 py-3 text-sm font-bold text-primary-foreground"
-        >
-          Login
-        </button>
+      <div className="fade-in">
+        <EmptyState
+          icon={ShieldCheck}
+          title="Log in to see your profile"
+          description="Manage your wallet, referral code, security and orders."
+          action={<Button onClick={() => openModal("auth")}>Login</Button>}
+        />
       </div>
     );
   }
@@ -84,7 +108,6 @@ function ProfilePage() {
       await updatePassword(user, newPass);
       setCurPass("");
       setNewPass("");
-      setShowPass(false);
       showSuccess("Password changed", "Use your new password next time you log in.");
     } catch (e) {
       const code = (e as { code?: string })?.code || "";
@@ -111,7 +134,6 @@ function ProfilePage() {
       await verifyBeforeUpdateEmail(user, mail);
       setNewEmail("");
       setMailPass("");
-      setShowMail(false);
       showSuccess(
         "Check your new inbox",
         `We sent a confirmation link to ${mail}. Your email changes after you tap it.`,
@@ -139,242 +161,306 @@ function ProfilePage() {
     showSuccess("Updated", "Phone number saved.");
   }
 
+  async function installApp() {
+    const result = await startAppInstall();
+    if (result === "installed") notify("App is already installed");
+    else if (result === "prompted") notify("Installing app…");
+    else
+      notify(
+        isAppInstalled()
+          ? "App is already installed"
+          : "Open your browser menu and tap 'Add to Home screen' to install the app",
+      );
+  }
+
+  async function logout() {
+    if (auth) await signOut(auth);
+    notify("Logged out");
+    navigate({ to: "/" });
+  }
+
+  const quickLinks = [
+    { icon: PackageCheck, label: "Orders", onClick: () => navigate({ to: "/orders" }) },
+    { icon: Wallet, label: "Wallet & deposits", onClick: () => openModal("wallet") },
+    { icon: Lightbulb, label: "Request a product", onClick: () => openModal("suggestion") },
+  ];
+
   return (
-    <div className="mx-auto w-full max-w-md px-4 py-5 md:max-w-3xl">
-      <h1 className="mb-4 text-xl font-bold">My profile</h1>
-      <div className="mb-6 flex items-center gap-4">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-xl font-bold uppercase text-primary">
-          {(profile?.name || user.email || "U").slice(0, 1)}
-        </div>
-        <div>
-          <h2 className="text-lg font-bold">{profile?.name || user.displayName || "User"}</h2>
-          <p className="text-xs text-muted-foreground">{user.email}</p>
-        </div>
-      </div>
+    <div className="fade-in mx-auto max-w-3xl space-y-5">
+      <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">My profile</h1>
 
-      <div className="mb-6 flex items-center justify-between rounded-2xl bg-foreground p-5 text-background shadow-lg">
-        <div>
-          <p className="text-[10px] font-bold uppercase opacity-70">Wallet balance</p>
-          <p className="text-2xl font-bold">${wallet}</p>
-        </div>
-        <button
-          onClick={() => openModal("wallet")}
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-background text-lg font-bold text-foreground"
-        >
-          ＋
-        </button>
-      </div>
-
-      {profile?.myRefCode ? (
-        <div className="mb-4 rounded-2xl border border-border p-4">
-          <p className="mb-1 text-sm font-bold"><Emo k="web.gift" /> Refer &amp; Earn</p>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Earn {referralPercent()}% commission on every purchase your friend makes (up to ${referralCap()} per
-            friend)!
-          </p>
-          <p className="mb-1 text-xs font-bold">
-            <Emo k="web.code" /> Code: <span className="text-primary">{profile.myRefCode}</span>
-          </p>
-          <button
-            onClick={() => {
-              navigator.clipboard?.writeText(websiteReferralLink(profile.myRefCode!));
-              notify("Referral link copied");
-            }}
-            className="mb-1 block w-full break-all rounded-lg bg-muted p-2 text-left text-[11px]"
-          >
-            <Emo k="web.link" /> {websiteReferralLink(profile.myRefCode)}
-          </button>
-          <button
-            onClick={() => {
-              navigator.clipboard?.writeText(botReferralLink(profile.myRefCode!));
-              notify("Bot link copied");
-            }}
-            className="mb-3 block w-full break-all rounded-lg bg-muted p-2 text-left text-[11px]"
-          >
-            <Emo k="web.bot" /> {botReferralLink(profile.myRefCode)}
-          </button>
-          <p className="mb-1 text-xs font-bold"><Emo k="web.users" /> Total referrals: {invited}</p>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <span>• Today: ${earnings.today}</span>
-            <span>• This week: ${earnings.week}</span>
-            <span>• This month: ${earnings.month}</span>
-            <span>• Total: ${earnings.total}</span>
-          </div>
-        </div>
-      ) : null}
-
-      <label className="mb-1 ml-1 block text-xs font-bold text-muted-foreground">Phone number</label>
-      <div className="mb-4 flex gap-2">
-        <input
-          className={inputCls}
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="Add mobile"
-        />
-        <button
-          onClick={savePhone}
-          className="rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground"
-        >
-          Save
-        </button>
-      </div>
-
-      {isEmailUser ? (
-        <div className="mb-4 rounded-2xl border border-border p-4">
-          <button
-            onClick={() => setShowPass(!showPass)}
-            className="flex w-full items-center justify-between text-sm font-bold"
-          >
-            <span><Emo k="web.key" /> Change password</span>
-            <span>{showPass ? "−" : "›"}</span>
-          </button>
-          {showPass ? (
-            <div className="mt-3 space-y-2">
-              <input
-                className={inputCls}
-                type="password"
-                placeholder="Current password"
-                value={curPass}
-                onChange={(e) => setCurPass(e.target.value)}
-              />
-              <input
-                className={inputCls}
-                type="password"
-                placeholder="New password (min 6 characters)"
-                value={newPass}
-                onChange={(e) => setNewPass(e.target.value)}
-              />
-              <button
-                onClick={changePassword}
-                disabled={passBusy || !curPass || !newPass}
-                className="w-full rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground disabled:opacity-60"
-              >
-                {passBusy ? "Saving…" : "Update password"}
-              </button>
+      {/* Account + wallet */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <CardContent className="flex items-center gap-4">
+            <Avatar className="size-14 text-lg ring-1 ring-border">
+              {user.photoURL ? <AvatarImage src={user.photoURL} alt="" /> : null}
+              <AvatarFallback>{(profile?.name || user.email || "U").slice(0, 1)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <h2 className="truncate font-display text-lg font-semibold">
+                {profile?.name || user.displayName || "User"}
+              </h2>
+              <p className="truncate text-xs text-muted-foreground">{user.email}</p>
+              {isAdmin ? (
+                <Badge variant="muted" className="mt-1.5">
+                  <ShieldCheck className="size-3" /> Admin
+                </Badge>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ) : null}
+          </CardContent>
+        </Card>
 
-      {isEmailUser ? (
-        <div className="mb-4 rounded-2xl border border-border p-4">
-          <button
-            onClick={() => setShowMail(!showMail)}
-            className="flex w-full items-center justify-between text-sm font-bold"
-          >
-            <span><Emo k="web.mail" /> Change email</span>
-            <span>{showMail ? "−" : "›"}</span>
-          </button>
-          {showMail ? (
-            <div className="mt-3 space-y-2">
-              <input
-                className={inputCls}
-                type="email"
-                placeholder="New email address"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-              />
-              <input
-                className={inputCls}
-                type="password"
-                placeholder="Current password"
-                value={mailPass}
-                onChange={(e) => setMailPass(e.target.value)}
-              />
-              <button
-                onClick={changeEmail}
-                disabled={mailBusy || !newEmail || !mailPass}
-                className="w-full rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground disabled:opacity-60"
-              >
-                {mailBusy ? "Sending…" : "Send confirmation link"}
-              </button>
-              <p className="text-[11px] text-muted-foreground">
-                A confirmation link goes to the new address — your login email changes after you tap it.
-              </p>
+        <Card className="justify-center bg-primary text-primary-foreground">
+          <CardContent className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide opacity-80">Wallet balance</p>
+              <p className="font-display text-3xl font-bold tabular-nums">${wallet}</p>
             </div>
-          ) : null}
-        </div>
-      ) : null}
+            <Button
+              variant="secondary"
+              className="bg-white/15 text-white hover:bg-white/25"
+              onClick={() => openModal("wallet")}
+            >
+              <Wallet className="size-4" /> Top up
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
 
-      <div className="space-y-2">
-        <button
-          onClick={() => navigate({ to: "/orders" })}
-          className="flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-        >
-          <span><Emo k="web.orders" /> Orders</span>
-          <span>›</span>
-        </button>
-        <button
-          onClick={() => openModal("wallet")}
-          className="flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-        >
-          <span><Emo k="web.wallet" /> Wallet & deposits</span>
-          <span>›</span>
-        </button>
-        <Link
-          to="/history"
-          className="flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-        >
-          <span><Emo k="web.wallet" /> Wallet history</span>
-          <span>›</span>
-        </Link>
-        <Link
-          to="/api-key"
-          className="flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-        >
-          <span><Emo k="web.key" /> Reseller API key</span>
-          <span>›</span>
-        </Link>
-        <button
-          onClick={() => openModal("suggestion")}
-          className="flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-        >
-          <span><Emo k="web.idea" /> Request a product</span>
-          <span>›</span>
-        </button>
-
-        {isAdmin ? (
-          <Link
-            to="/admin"
-            search={{ view: "analysis" }}
-            className="flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-          >
-            <span><Emo k="web.admin" /> Admin panel</span>
-            <span>›</span>
+      {/* Quick links */}
+      <div className="grid gap-2 sm:grid-cols-3">
+        {quickLinks.map((l) => {
+          const Icon = l.icon;
+          return (
+            <button
+              key={l.label}
+              onClick={l.onClick}
+              className="flex items-center gap-3 rounded-xl border border-border bg-card p-3.5 text-left text-sm font-medium shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/5"
+            >
+              <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Icon className="size-4" />
+              </span>
+              {l.label}
+            </button>
+          );
+        })}
+        <Button variant="outline" className="justify-start gap-3 h-auto p-3.5" asChild>
+          <Link to="/history">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <Receipt className="size-4" />
+            </span>
+            Wallet history
           </Link>
+        </Button>
+        <Button variant="outline" className="justify-start gap-3 h-auto p-3.5" asChild>
+          <Link to="/api-key">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <KeyRound className="size-4" />
+            </span>
+            Reseller API key
+          </Link>
+        </Button>
+        {isAdmin ? (
+          <Button variant="outline" className="justify-start gap-3 h-auto p-3.5" asChild>
+            <Link to="/admin" search={{ view: "analysis" }}>
+              <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <ShieldCheck className="size-4" />
+              </span>
+              Admin panel
+            </Link>
+          </Button>
         ) : null}
       </div>
 
-      <button
-        onClick={async () => {
-          const result = await startAppInstall();
-          if (result === "installed") {
-            notify("App is already installed");
-          } else if (result === "prompted") {
-            notify("Installing app…");
-          } else {
-            notify(
-              isAppInstalled()
-                ? "App is already installed"
-                : "Open your browser menu and tap 'Add to Home screen' to install the app",
-            );
-          }
-        }}
-        className="mt-6 flex w-full justify-between rounded-xl border border-border p-3.5 text-sm font-bold"
-      >
-        <span><Emo k="web.download" /> Download app</span>
-        <span>›</span>
-      </button>
+      {/* Referral */}
+      {profile?.myRefCode ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Gift className="size-4 text-primary" /> Refer &amp; earn
+            </CardTitle>
+            <CardDescription>
+              Earn {referralPercent()}% commission on every purchase your friend makes (up to $
+              {referralCap()} per friend).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Your code</span>
+              <Badge className="font-display tracking-wide">{profile.myRefCode}</Badge>
+            </div>
 
+            <div className="space-y-2">
+              <ReferralLink
+                label="Website link"
+                value={websiteReferralLink(profile.myRefCode)}
+                onCopy={() => {
+                  navigator.clipboard?.writeText(websiteReferralLink(profile.myRefCode!));
+                  notify("Referral link copied");
+                }}
+              />
+              <ReferralLink
+                label="Telegram bot link"
+                value={botReferralLink(profile.myRefCode)}
+                onCopy={() => {
+                  navigator.clipboard?.writeText(botReferralLink(profile.myRefCode!));
+                  notify("Bot link copied");
+                }}
+              />
+            </div>
+
+            <Separator />
+
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Users className="size-4 text-muted-foreground" /> {invited} total referrals
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { label: "Today", value: earnings.today },
+                { label: "This week", value: earnings.week },
+                { label: "This month", value: earnings.month },
+                { label: "Total", value: earnings.total },
+              ].map((e) => (
+                <div key={e.label} className="rounded-xl bg-muted/50 p-3 text-center">
+                  <p className="font-display text-lg font-bold tabular-nums">${e.value}</p>
+                  <p className="text-[11px] text-muted-foreground">{e.label}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Account settings tabs */}
+      <Card>
+        <CardContent className="pt-6">
+          <Tabs defaultValue="account">
+            <TabsList className="w-full">
+              <TabsTrigger value="account">Account</TabsTrigger>
+              <TabsTrigger value="security" disabled={!isEmailUser}>
+                Security
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="account" className="pt-4">
+              <Label htmlFor="phone" className="mb-1.5">
+                Phone number
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="phone"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="Add mobile"
+                  inputMode="tel"
+                />
+                <Button onClick={savePhone}>Save</Button>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="security" className="space-y-6 pt-4">
+              <div className="space-y-2">
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <KeyRound className="size-4 text-muted-foreground" /> Change password
+                </h3>
+                <Input
+                  type="password"
+                  placeholder="Current password"
+                  value={curPass}
+                  onChange={(e) => setCurPass(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <Input
+                  type="password"
+                  placeholder="New password (min 6 characters)"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <Button
+                  className="w-full"
+                  onClick={changePassword}
+                  disabled={passBusy || !curPass || !newPass}
+                >
+                  {passBusy ? "Saving…" : "Update password"}
+                </Button>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-2">
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <Mail className="size-4 text-muted-foreground" /> Change email
+                </h3>
+                <Input
+                  type="email"
+                  placeholder="New email address"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  autoComplete="email"
+                />
+                <Input
+                  type="password"
+                  placeholder="Current password"
+                  value={mailPass}
+                  onChange={(e) => setMailPass(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <Button
+                  className="w-full"
+                  onClick={changeEmail}
+                  disabled={mailBusy || !newEmail || !mailPass}
+                >
+                  {mailBusy ? "Sending…" : "Send confirmation link"}
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  A confirmation link goes to the new address — your login email changes after you
+                  tap it.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Footer actions */}
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button variant="outline" className="flex-1" onClick={installApp}>
+          <Smartphone className="size-4" /> Download app
+        </Button>
+        <Button
+          variant="outline"
+          className="flex-1 text-destructive hover:bg-destructive/10"
+          onClick={logout}
+        >
+          <LogOut className="size-4" /> Log out
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ReferralLink({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: () => void;
+}) {
+  return (
+    <div>
+      <p className="mb-1 text-xs text-muted-foreground">{label}</p>
       <button
-        onClick={async () => {
-          if (auth) await signOut(auth);
-          notify("Logged out");
-          navigate({ to: "/" });
-        }}
-        className="mt-2 w-full rounded-xl bg-destructive/10 py-3.5 text-sm font-bold text-destructive"
+        onClick={onCopy}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-xl border border-border bg-muted/50 p-2.5 text-left transition-colors hover:border-primary/40",
+        )}
       >
-        Log out
+        <span className="min-w-0 flex-1 truncate text-xs">{value}</span>
+        <Copy className="size-4 shrink-0 text-muted-foreground" />
       </button>
     </div>
   );

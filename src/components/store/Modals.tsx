@@ -1,23 +1,34 @@
 import { lazy, Suspense } from "react";
+import { Check } from "lucide-react";
 import { useStore } from "@/context/StoreContext";
+import { ResponsiveDialog } from "@/components/ui/responsive-dialog";
+import { Button } from "@/components/ui/button";
 
 export function SuccessOverlay() {
   const { success, closeSuccess } = useStore();
-  if (!success) return null;
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background p-6 text-center">
-      <div className="success-checkmark mb-6">
-        <div className="check-icon" />
+    <ResponsiveDialog
+      open={Boolean(success)}
+      onOpenChange={(open) => {
+        if (!open) closeSuccess();
+      }}
+      title={success?.title ?? "Success"}
+      hideHeader
+      className="sm:max-w-sm"
+      footer={
+        <Button className="w-full" onClick={closeSuccess}>
+          Continue
+        </Button>
+      }
+    >
+      <div className="flex flex-col items-center py-4 text-center">
+        <div className="mb-5 flex size-16 items-center justify-center rounded-full bg-success text-success-foreground motion-safe:animate-in motion-safe:zoom-in-75">
+          <Check className="size-8" strokeWidth={3} aria-hidden />
+        </div>
+        <h2 className="font-display text-xl font-bold">{success?.title}</h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">{success?.desc}</p>
       </div>
-      <h2 className="mb-2 text-2xl font-black">{success.title}</h2>
-      <p className="mb-8 text-sm text-muted-foreground">{success.desc}</p>
-      <button
-        onClick={closeSuccess}
-        className="w-full max-w-xs rounded-xl bg-foreground py-3.5 text-sm font-bold text-background"
-      >
-        Continue
-      </button>
-    </div>
+    </ResponsiveDialog>
   );
 }
 

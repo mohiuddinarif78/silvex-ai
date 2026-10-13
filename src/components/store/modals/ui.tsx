@@ -1,52 +1,40 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import {
-  createUserWithEmailAndPassword,
-  getRedirectResult,
-  GoogleAuthProvider,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-  signInWithRedirect,
-  signOut,
-  updateProfile,
-} from "@/lib/fb/auth";
-import {
-  equalTo,
-  get,
-  onValue,
-  orderByChild,
-  push,
-  query,
-  ref,
-  set,
-  update,
-} from "@/lib/fb/database";
-import { useStore } from "@/context/StoreContext";
-import { checkDeposit, fallbackDepositAddress } from "@/lib/deposit.functions";
-import { Emo } from "@/components/store/Emo";
+import type { ReactNode } from "react";
+
+import { ResponsiveDialog } from "@/components/ui/responsive-dialog";
+
+/**
+ * Backwards-compatible modal shell. Older modals call this with
+ * `<Sheet onClose title>...</Sheet>`; it now renders the accessible
+ * ResponsiveDialog (bottom Drawer on phones, centered Dialog on desktop) so
+ * every modal gets focus trapping, Esc-to-close and aria-modal for free.
+ */
 export function Sheet({
   onClose,
   children,
   title,
+  description,
 }: {
   onClose: () => void;
   children: ReactNode;
   title?: string;
+  description?: string;
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="fade-in max-h-[92vh] w-full max-w-sm overflow-y-auto rounded-t-3xl bg-card p-6 shadow-2xl sm:rounded-3xl">
-        <div className="mb-4 flex items-start justify-between">
-          {title ? <h2 className="text-xl font-black">{title}</h2> : <span />}
-          <button onClick={onClose} aria-label="Close" className="text-muted-foreground">
-            ✕
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+    <ResponsiveDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title={title ?? "Dialog"}
+      hideHeader={!title}
+      {...(description ? { description } : {})}
+      className="sm:max-w-md"
+    >
+      {children}
+    </ResponsiveDialog>
   );
 }
 
+/** Shared input styling, aligned with the ui/input component. */
 export const inputCls =
-  "w-full rounded-xl border border-border bg-muted/60 p-3 text-sm outline-none focus:ring-2 focus:ring-ring";
+  "flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50";

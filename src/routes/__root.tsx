@@ -17,6 +17,7 @@ import { AppShell } from "@/components/store/AppShell";
 import { MaintenanceGate } from "@/components/store/MaintenanceGate";
 import { Toaster } from "@/components/ui/sonner";
 import { PushPrompt } from "@/components/store/PushPrompt";
+import { ThemeProvider, themeInitScript } from "@/components/theme-provider";
 import { getStoreSnapshot } from "@/lib/store-snapshot.functions";
 import { primeStoreSnapshot } from "@/context/store-prime";
 
@@ -131,6 +132,7 @@ function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <HeadContent />
       </head>
       <body>
@@ -164,16 +166,18 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <StoreProvider>
-        <AppShell>
-          <MaintenanceGate>
-            {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-            <Outlet />
-          </MaintenanceGate>
-        </AppShell>
-        <PushPrompt />
-        <Toaster position="top-center" />
-      </StoreProvider>
+      <ThemeProvider>
+        <StoreProvider>
+          <AppShell>
+            <MaintenanceGate>
+              {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+              <Outlet />
+            </MaintenanceGate>
+          </AppShell>
+          <PushPrompt />
+          <Toaster position="top-center" />
+        </StoreProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

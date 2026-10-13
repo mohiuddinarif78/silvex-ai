@@ -14,15 +14,19 @@ const items = [
 
 export function ManagementHub() {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {items.map(({ to, label, detail, icon: Icon }) => (
-        <Link key={to} to={to} className="card-hover shadow-card group flex min-h-36 min-w-0 flex-col justify-between rounded-3xl border border-border/60 bg-card p-4 transition hover:border-primary/50">
-          <span className="gradient-primary shadow-colored-primary grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-primary-foreground">
-            <Icon className="h-5 w-5" />
+        <Link
+          key={to}
+          to={to}
+          className="group flex min-w-0 flex-col gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+        >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+            <Icon className="size-5" />
           </span>
           <span className="min-w-0">
-            <span className="font-display block text-sm font-bold">{label}</span>
-            <span className="mt-1 block text-xs leading-4 text-muted-foreground">{detail}</span>
+            <span className="font-display block text-sm font-semibold">{label}</span>
+            <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">{detail}</span>
           </span>
         </Link>
       ))}

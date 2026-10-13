@@ -1,16 +1,29 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { get, onValue, push, ref, remove, set, update } from "@/lib/fb/database";
-import { useStore, isOwnerEmail, isFixedOwner, type Product, type Category } from "@/context/StoreContext";
-import { fileToCompressedDataUrl } from "@/lib/image-upload";
-import { exportOrdersCsv, exportOrdersPdf, type ExportRow } from "@/lib/export-orders";
-import { sendSmtpMail } from "@/lib/mail.functions";
-import { deliveryBlock, emailShell, sendMail } from "@/lib/mailer";
-import { notifyTelegramOrder } from "@/lib/telegram.functions";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, History as HistoryIcon, Search, Wallet } from "lucide-react";
+import { get, onValue, push, ref, set, update } from "@/lib/fb/database";
+import { useStore, isOwnerEmail, isFixedOwner } from "@/context/StoreContext";
 import { reportBalanceChange } from "@/lib/wallet.functions";
 import { input, Empty } from "@/components/admin/shared";
 
-
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@radix-ui/react-collapsible";
 
 type HistoryRow = {
   id: string;
@@ -29,14 +42,10 @@ type UserRow = {
   phone?: string;
   isAdmin?: boolean;
   isOwner?: boolean;
-  /** true when this row is another owner, shown as a normal user */
   hidden?: boolean;
 };
 
-
-
 type SortMode = "none" | "deposits" | "wallet" | "orders";
-
 type RawUser = Omit<UserRow, "uid"> & { history?: Record<string, HistoryRow> };
 
 export function UsersAdmin() {
@@ -45,32 +54,39 @@ export function UsersAdmin() {
   const [orderCounts, setOrderCounts] = useState<Record<string, number>>({});
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("none");
-  const [listLimit, setListLimit] = useState(5);
+  const [listLimit, setListLimit] = useState(10);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [historyLimit, setHistoryLimit] = useState(5);
-  const [allWalletOpen, setAllWalletOpen] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(10);
   const [walletSearch, setWalletSearch] = useState("");
-  const [walletLimit, setWalletLimit] = useState(5);
+  const [walletLimit, setWalletLimit] = useState(10);
 
-  // Every wallet change across all users, newest first.
-  const allWalletRows = users
-    .flatMap((u) =>
-      Object.entries((u as RawUser).history || {}).map(([id, h]) => ({
-        id,
-        ...(h as Omit<HistoryRow, "id">),
-        userName: u.name || "User",
-        userEmail: u.email || "",
-      })),
-    )
-    .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+  // Wallet editor dialog state
+  const [editUser, setEditUser] = useState<UserRow | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editConfirm, setEditConfirm] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+
+  const allWalletRows = useMemo(
+    () =>
+      users
+        .flatMap((u) =>
+          Object.entries((u as RawUser).history || {}).map(([id, h]) => ({
+            id,
+            ...(h as Omit<HistoryRow, "id">),
+            userName: u.name || "User",
+            userEmail: u.email || "",
+          })),
+        )
+        .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")),
+    [users],
+  );
   const walletFiltered = allWalletRows.filter((h) =>
     `${h.userName} ${h.userEmail} ${h.type ?? ""} ${h.desc ?? ""}`
       .toLowerCase()
       .includes(walletSearch.toLowerCase()),
   );
 
-  // Order counts per user, loaded once for the "high orders" filter.
   useEffect(() => {
     if (!db) return;
     get(ref(db, "orders")).then((s) => {
@@ -83,7 +99,6 @@ export function UsersAdmin() {
     });
   }, [db]);
 
-  // Live wallet history for whichever user the admin opened.
   useEffect(() => {
     if (!db || !historyFor) {
       setHistory([]);
@@ -102,22 +117,15 @@ export function UsersAdmin() {
   useEffect(() => {
     if (!db) return;
     return onValue(ref(db, "users"), (s) =>
-      setUsers(
-        Object.entries(s.val() || {}).map(([uid, u]) => ({
-          uid,
-          ...(u as Omit<UserRow, "uid">),
-        })),
-      ),
+      setUsers(Object.entries(s.val() || {}).map(([uid, u]) => ({ uid, ...(u as Omit<UserRow, "uid">) }))),
     );
   }, [db]);
 
-  // Owners are invisible to each other: another owner looks like a normal user.
   const disguised = users.map((u) => {
     const otherOwner = isOwnerEmail(u.email) && u.uid !== user?.uid;
     return otherOwner ? { ...u, isOwner: false, isAdmin: false, hidden: true } : u;
   });
 
-  // Total deposited per user, summed from their wallet history.
   const depositTotal = (u: UserRow) =>
     Object.values((u as RawUser).history || {})
       .filter((h) => h.type === "Deposit")
@@ -136,54 +144,76 @@ export function UsersAdmin() {
           : searched;
   const list = sorted.slice(0, listLimit);
 
-  async function setWallet(u: UserRow) {
-    if (!db) return;
-    const raw = prompt(`New wallet balance for ${u.email}`, String(u.wallet ?? 0));
-    if (raw === null) return;
-    const amount = Number(raw);
+  function openWalletEditor(u: UserRow) {
+    setEditUser(u);
+    setEditAmount(String(u.wallet ?? 0));
+    setEditConfirm("");
+  }
+
+  async function saveWallet() {
+    if (!db || !editUser) return;
+    const u = editUser;
+    const amount = Number(editAmount);
     if (Number.isNaN(amount) || amount < 0) return notify("Enter a valid amount");
     const before = Number(u.wallet ?? 0);
     const change = amount - before;
     if (Math.abs(change) < 0.0001) return notify("Balance unchanged");
-    // Every change needs a confirm; big ones need the amount typed back.
-    if (!confirm(`Change ${u.email || u.uid} from $${before.toFixed(2)} to $${amount.toFixed(2)} (${change > 0 ? "+" : ""}${change.toFixed(2)})?`)) return;
-    if (Math.abs(change) >= 20) {
-      const typed = prompt(`Big change. Type ${amount} again to confirm.`);
-      if (typed === null || Number(typed) !== amount) return notify("Cancelled — amount didn't match");
+    // Big changes need the amount typed back (same safeguard as before).
+    if (Math.abs(change) >= 20 && Number(editConfirm) !== amount) {
+      return notify(`Big change — type ${amount} again to confirm.`);
     }
-    await set(ref(db, `users/${u.uid}/wallet`), amount);
-    await push(ref(db, `users/${u.uid}/history`), {
-      type: "Adjustment",
-      amount: change,
-      desc: `Balance set by admin ${user?.email || ""} ($${before.toFixed(2)} → $${amount.toFixed(2)})`,
-      by: user?.email || "",
-      date: new Date().toISOString(),
-    });
-    void user
-      ?.getIdToken()
-      .then((idToken) =>
-        reportBalanceChange({
-          data: { idToken, uid: u.uid, type: "Adjustment", amount: change, desc: `Balance set by admin ($${before.toFixed(2)} → $${amount.toFixed(2)})` },
-        }),
-      )
-      .catch(() => undefined);
-    notify("Balance updated");
+    setEditBusy(true);
+    try {
+      await set(ref(db, `users/${u.uid}/wallet`), amount);
+      await push(ref(db, `users/${u.uid}/history`), {
+        type: "Adjustment",
+        amount: change,
+        desc: `Balance set by admin ${user?.email || ""} ($${before.toFixed(2)} → $${amount.toFixed(2)})`,
+        by: user?.email || "",
+        date: new Date().toISOString(),
+      });
+      void user
+        ?.getIdToken()
+        .then((idToken) =>
+          reportBalanceChange({
+            data: {
+              idToken,
+              uid: u.uid,
+              type: "Adjustment",
+              amount: change,
+              desc: `Balance set by admin ($${before.toFixed(2)} → $${amount.toFixed(2)})`,
+            },
+          }),
+        )
+        .catch(() => undefined);
+      notify("Balance updated");
+      setEditUser(null);
+    } finally {
+      setEditBusy(false);
+    }
   }
 
+  const editChange = editUser ? Number(editAmount || 0) - Number(editUser.wallet ?? 0) : 0;
+  const needsConfirm = Math.abs(editChange) >= 20;
+
   return (
-    <div className="space-y-3">
-      <input
-        className={input}
-        placeholder="Search name or email"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+    <div className="space-y-4">
+      {/* Search + filters */}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="pl-9"
+          placeholder="Search name or email"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
       <div className="flex flex-wrap gap-2">
         {(
           [
             ["none", "All users"],
             ["deposits", "High deposit"],
-            ["wallet", "High wallet balance"],
+            ["wallet", "High balance"],
             ["orders", "High orders"],
           ] as [SortMode, string][]
         ).map(([mode, label]) => (
@@ -191,229 +221,238 @@ export function UsersAdmin() {
             key={mode}
             onClick={() => {
               setSortMode(mode);
-              setListLimit(5);
+              setListLimit(10);
             }}
-            className={`rounded-lg px-3 py-1.5 text-xs font-bold ${
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
               sortMode === mode
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground"
-            }`}
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card hover:border-primary/40",
+            )}
           >
             {label}
           </button>
         ))}
       </div>
-      {sorted.length > listLimit ? (
-        <div className="flex flex-wrap gap-2">
-          {[5, 20, 50].filter((n) => n > listLimit && n < sorted.length).map((n) => (
-            <button
-              key={n}
-              onClick={() => setListLimit(n)}
-              className="rounded-lg border border-border px-3 py-1.5 text-[11px] font-bold"
-            >
-              Show {n}
-            </button>
-          ))}
-          <button
-            onClick={() => setListLimit(sorted.length)}
-            className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-primary-foreground"
-          >
-            Show all ({sorted.length})
-          </button>
-        </div>
-      ) : null}
-      <button
-        onClick={() => {
-          setAllWalletOpen(!allWalletOpen);
-          setWalletLimit(5);
-          setWalletSearch("");
-        }}
-        className={`w-full rounded-xl px-3 py-2.5 text-xs font-black ${
-          allWalletOpen ? "bg-primary text-primary-foreground" : "bg-muted"
-        }`}
-      >
-        {allWalletOpen ? "Hide wallet changes" : `Wallet changes (${allWalletRows.length})`}
-      </button>
-      {allWalletOpen ? (
-        <div className="space-y-2 rounded-2xl border border-border bg-card p-3">
-          <input
-            className={input}
-            placeholder="Search user, type or description"
-            value={walletSearch}
-            onChange={(e) => {
-              setWalletSearch(e.target.value);
-              setWalletLimit(5);
-            }}
-          />
-          {walletFiltered.length === 0 ? (
-            <p className="py-2 text-center text-[11px] text-muted-foreground">
-              No wallet changes found.
-            </p>
-          ) : (
-            walletFiltered.slice(0, walletLimit).map((h) => (
-              <div
-                key={`${h.userEmail}-${h.id}`}
-                className="flex items-center justify-between rounded-xl border border-border p-2.5"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-bold">
-                    {h.userName} <span className="text-muted-foreground">({h.userEmail})</span>
-                  </p>
-                  <p className="truncate text-[11px] text-muted-foreground">
-                    {h.type} — {h.desc}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {h.date ? new Date(h.date).toLocaleString() : ""}
-                  </p>
-                </div>
-                <span className="text-sm font-black">${h.amount ?? 0}</span>
-              </div>
-            ))
-          )}
-          {walletFiltered.length > walletLimit ? (
-            <div className="flex flex-wrap justify-center gap-2 pt-1">
-              {[20, 50].filter((n) => n > walletLimit && n < walletFiltered.length).map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setWalletLimit(n)}
-                  className="rounded-lg border border-border px-3 py-1.5 text-[11px] font-bold"
-                >
-                  Show {n}
-                </button>
-              ))}
-              <button
-                onClick={() => setWalletLimit(walletFiltered.length)}
-                className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-primary-foreground"
-              >
-                Show all ({walletFiltered.length})
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {list.map((u) => (
-        <div key={u.uid} className="rounded-2xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-bold">{u.name || "User"}</p>
-              <p className="truncate text-xs text-muted-foreground">{u.email}</p>
-            </div>
-            <span className="text-sm font-black">${u.wallet ?? 0}</span>
-          </div>
-          {sortMode !== "none" ? (
-            <p className="mt-1 text-[11px] font-bold text-muted-foreground">
-              {sortMode === "deposits"
-                ? `Total deposited: $${depositTotal(u).toFixed(2)}`
-                : sortMode === "orders"
-                  ? `Orders: ${orderCounts[u.uid] ?? 0}`
-                  : `Wallet balance: $${u.wallet ?? 0}`}
-            </p>
-          ) : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              onClick={() => setWallet(u)}
-              className="rounded-lg bg-muted px-3 py-1.5 text-xs font-bold"
-            >
-              Set balance
-            </button>
-            <button
-              onClick={() => {
-                setHistoryFor(historyFor === u.uid ? null : u.uid);
-                setHistoryLimit(5);
-              }}
-              className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary"
-            >
-              {historyFor === u.uid ? "Hide history" : "Wallet history"}
-            </button>
-            {u.uid === user?.uid ? (
-              <span className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary">
-                You
-              </span>
-            ) : isFixedOwner(u.email) ? (
-              <span className="rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-600">
-                Permanent owner
-              </span>
-            ) : u.isAdmin || u.hidden ? (
-              <button
-                onClick={async () => {
-                  if (!db) return;
-                  await update(ref(db, `users/${u.uid}`), {
-                    isAdmin: false,
-                    isOwner: false,
-                    ownerRevoked: true,
-                  });
-                  notify("Access removed");
+
+      {/* All wallet changes */}
+      <Collapsible>
+        <CollapsibleTrigger asChild>
+          <Button variant="outline" className="w-full justify-between">
+            <span className="flex items-center gap-2">
+              <Wallet className="size-4" /> Wallet changes ({allWalletRows.length})
+            </span>
+            <ChevronDown className="size-4 transition-transform data-[state=open]:rotate-180" />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">
+          <Card>
+            <CardContent className="space-y-2">
+              <Input
+                placeholder="Search user, type or description"
+                value={walletSearch}
+                onChange={(e) => {
+                  setWalletSearch(e.target.value);
+                  setWalletLimit(10);
                 }}
-                className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs font-bold text-destructive"
-              >
-                Remove admin
-              </button>
-            ) : null}
-          </div>
-          {historyFor === u.uid ? (
-            <div className="mt-3 space-y-2 border-t border-border pt-3">
-              <p className="text-xs font-black text-muted-foreground">Wallet history</p>
-              {history.length === 0 ? (
-                <p className="py-2 text-center text-[11px] text-muted-foreground">
-                  No transactions yet.
-                </p>
+              />
+              {walletFiltered.length === 0 ? (
+                <p className="py-2 text-center text-xs text-muted-foreground">No wallet changes found.</p>
               ) : (
-                history.slice(0, historyLimit).map((h) => (
+                walletFiltered.slice(0, walletLimit).map((h) => (
                   <div
-                    key={h.id}
-                    className="flex items-center justify-between rounded-xl border border-border p-2.5"
+                    key={`${h.userEmail}-${h.id}`}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-border p-2.5"
                   >
                     <div className="min-w-0">
-                      <p className="flex items-center gap-2 text-xs font-bold">
-                        {h.type}
-                        {h.status ? (
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                              h.status === "Paid"
-                                ? "bg-primary/10 text-primary"
-                                : "bg-muted text-muted-foreground"
-                            }`}
-                          >
-                            {h.status}
-                          </span>
-                        ) : null}
+                      <p className="truncate text-xs font-semibold">
+                        {h.userName} <span className="text-muted-foreground">({h.userEmail})</span>
                       </p>
-                      <p className="truncate text-[11px] text-muted-foreground">{h.desc}</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {h.date ? new Date(h.date).toLocaleString() : ""}
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {h.type} — {h.desc}
                       </p>
                     </div>
-                    <span className="text-sm font-black">${h.amount ?? 0}</span>
+                    <span className="shrink-0 font-display text-sm font-bold tabular-nums">${h.amount ?? 0}</span>
                   </div>
                 ))
               )}
-              {history.length > historyLimit ? (
-                <div className="flex flex-wrap justify-center gap-2 pt-1">
-                  {[20, 50].filter((n) => n > historyLimit && n < history.length).map((n) => (
-                    <button
-                      key={n}
-                      onClick={() => setHistoryLimit(n)}
-                      className="rounded-lg border border-border px-3 py-1.5 text-[11px] font-bold"
-                    >
-                      Show {n}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setHistoryLimit(history.length)}
-                    className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-primary-foreground"
-                  >
-                    Show all ({history.length})
-                  </button>
-                </div>
+              {walletFiltered.length > walletLimit ? (
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => setWalletLimit((l) => l + 20)}>
+                  Show more
+                </Button>
               ) : null}
+            </CardContent>
+          </Card>
+        </CollapsibleContent>
+      </Collapsible>
+
+      {/* Users */}
+      {list.length === 0 ? (
+        <Empty text="No users found." />
+      ) : (
+        <div className="space-y-3">
+          {list.map((u) => (
+            <Card key={u.uid} className="gap-0 py-0">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{u.name || "User"}</p>
+                    <p className="truncate text-xs text-muted-foreground">{u.email}</p>
+                  </div>
+                  <span className="shrink-0 font-display text-base font-bold tabular-nums">${u.wallet ?? 0}</span>
+                </div>
+                {sortMode !== "none" ? (
+                  <p className="mt-1 text-xs font-medium text-muted-foreground">
+                    {sortMode === "deposits"
+                      ? `Total deposited: $${depositTotal(u).toFixed(2)}`
+                      : sortMode === "orders"
+                        ? `Orders: ${orderCounts[u.uid] ?? 0}`
+                        : `Wallet balance: $${u.wallet ?? 0}`}
+                  </p>
+                ) : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openWalletEditor(u)}>
+                    <Wallet className="size-4" /> Set balance
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-primary hover:bg-primary/10"
+                    onClick={() => {
+                      setHistoryFor(historyFor === u.uid ? null : u.uid);
+                      setHistoryLimit(10);
+                    }}
+                  >
+                    <HistoryIcon className="size-4" />
+                    {historyFor === u.uid ? "Hide history" : "History"}
+                  </Button>
+                  {u.uid === user?.uid ? (
+                    <Badge variant="muted">You</Badge>
+                  ) : isFixedOwner(u.email) ? (
+                    <Badge variant="muted" className="bg-accent/10 text-accent-foreground">
+                      Permanent owner
+                    </Badge>
+                  ) : u.isAdmin || u.hidden ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:bg-destructive/10"
+                      onClick={async () => {
+                        if (!db) return;
+                        await update(ref(db, `users/${u.uid}`), {
+                          isAdmin: false,
+                          isOwner: false,
+                          ownerRevoked: true,
+                        });
+                        notify("Access removed");
+                      }}
+                    >
+                      Remove admin
+                    </Button>
+                  ) : null}
+                </div>
+
+                {historyFor === u.uid ? (
+                  <div className="mt-3 space-y-2 border-t border-border pt-3">
+                    <p className="text-xs font-semibold text-muted-foreground">Wallet history</p>
+                    {history.length === 0 ? (
+                      <p className="py-2 text-center text-xs text-muted-foreground">No transactions yet.</p>
+                    ) : (
+                      history.slice(0, historyLimit).map((h) => (
+                        <div
+                          key={h.id}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-border p-2.5"
+                        >
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-2 text-xs font-semibold">
+                              {h.type}
+                              {h.status ? (
+                                <Badge variant={h.status === "Paid" ? "default" : "muted"}>{h.status}</Badge>
+                              ) : null}
+                            </p>
+                            <p className="truncate text-[11px] text-muted-foreground">{h.desc}</p>
+                          </div>
+                          <span className="shrink-0 font-display text-sm font-bold tabular-nums">${h.amount ?? 0}</span>
+                        </div>
+                      ))
+                    )}
+                    {history.length > historyLimit ? (
+                      <Button variant="ghost" size="sm" className="w-full" onClick={() => setHistoryLimit((l) => l + 20)}>
+                        Show more
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ))}
+
+          {sorted.length > listLimit ? (
+            <div className="flex justify-center">
+              <Button variant="outline" onClick={() => setListLimit((l) => l + 20)}>
+                Show more ({sorted.length - listLimit} left)
+              </Button>
             </div>
           ) : null}
         </div>
-      ))}
-      {list.length === 0 ? <Empty text="No users found." /> : null}
+      )}
+
+      {/* Wallet editor dialog */}
+      <Dialog open={Boolean(editUser)} onOpenChange={(open) => !open && setEditUser(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Set wallet balance</DialogTitle>
+            <DialogDescription>
+              {editUser?.email || editUser?.uid} · current ${Number(editUser?.wallet ?? 0).toFixed(2)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="wallet-amount" className="mb-1.5">
+                New balance ($)
+              </Label>
+              <Input
+                id="wallet-amount"
+                inputMode="decimal"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                autoFocus
+              />
+            </div>
+            {editAmount !== "" && !Number.isNaN(Number(editAmount)) ? (
+              <p
+                className={cn(
+                  "text-xs font-medium",
+                  editChange >= 0 ? "text-success" : "text-destructive",
+                )}
+              >
+                {editChange >= 0 ? "+" : "−"}${Math.abs(editChange).toFixed(2)} change
+              </p>
+            ) : null}
+            {needsConfirm ? (
+              <div>
+                <Label htmlFor="wallet-confirm" className="mb-1.5 text-destructive">
+                  Large change — type {Number(editAmount)} again to confirm
+                </Label>
+                <Input
+                  id="wallet-confirm"
+                  inputMode="decimal"
+                  value={editConfirm}
+                  onChange={(e) => setEditConfirm(e.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditUser(null)}>
+              Cancel
+            </Button>
+            <Button onClick={saveWallet} disabled={editBusy}>
+              {editBusy ? "Saving…" : "Update balance"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
-
-
-

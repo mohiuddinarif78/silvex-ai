@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Fragment } from "react";
+import { Download, FileText, Search } from "lucide-react";
 import { get, onValue, ref, update } from "@/lib/fb/database";
 import { buildStatementCsv, downloadCsv } from "@/lib/statement";
 import { useStore } from "@/context/StoreContext";
@@ -7,7 +9,28 @@ import { notifyTelegramOrder } from "@/lib/telegram.functions";
 import { websiteUrl } from "@/lib/referral";
 import { exportOrdersCsv, exportOrdersPdf, type ExportRow } from "@/lib/export-orders";
 import { downloadDeliveryTxt } from "@/lib/delivery-download";
-import { Empty, input, type OrderRow } from "@/components/admin/shared";
+import { Empty, type OrderRow } from "@/components/admin/shared";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+function statusVariant(status: string): "success" | "destructive" | "secondary" {
+  if (status === "Completed") return "success";
+  if (status === "Cancelled") return "destructive";
+  return "secondary";
+}
 
 export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
   const { db, products, config, notify, showSuccess } = useStore();
@@ -33,8 +56,11 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return orders;
-    return orders.filter((order) => [order.orderId, order.uid, order.email, order.phone, userNames[order.uid]]
-      .filter(Boolean).some((value) => String(value).toLowerCase().includes(term)));
+    return orders.filter((order) =>
+      [order.orderId, order.uid, order.email, order.phone, userNames[order.uid]]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term)),
+    );
   }, [orders, query, userNames]);
 
   function deliveryOf(item: { id?: string; title: string }) {
@@ -46,10 +72,11 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
     if (!db) return;
     const [u, o] = await Promise.all([get(ref(db, "users")), get(ref(db, "orders"))]);
     const users = Object.entries(u.val() || {}).map(([uid, v]) => ({ uid, ...(v as object) }));
-    downloadCsv(buildStatementCsv(users, Object.values(o.val() || {}), `${config.siteName || "Store"} — full statement`), `full-statement-${new Date().toISOString().slice(0, 10)}.csv`);
+    downloadCsv(
+      buildStatementCsv(users, Object.values(o.val() || {}), `${config.siteName || "Store"} — full statement`),
+      `full-statement-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
   }
-
-  function exportRows(): ExportRow[] { return exportFilteredRows(); }
 
   function openDelivery(order: OrderRow) {
     setDeliverFor(order);
@@ -60,60 +87,236 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
   async function completeDelivery() {
     if (!db || !deliverFor) return;
     const items = deliverFor.items || [];
-    const delivered = items.map((item, index) => ({ title: item.title, content: (deliverLines[index] || "").trim() })).filter((item) => item.content);
+    const delivered = items
+      .map((item, index) => ({ title: item.title, content: (deliverLines[index] || "").trim() }))
+      .filter((item) => item.content);
     if (!delivered.length && !deliverNote.trim()) return notify("Add the delivery details the buyer should see");
     setDelivering(true);
     try {
-      await update(ref(db, `orders/${deliverFor.orderId}`), { delivered, deliveryNote: deliverNote.trim(), status: "Completed", deliveredAt: new Date().toISOString() });
-      if (deliverFor.email) void sendMail(db, {
-        to: deliverFor.email,
-        subject: `${config.siteName || "Silvex AI"} · Order ${deliverFor.orderId.slice(-6)} delivered`,
-        html: emailShell(config.siteName || "Silvex AI", "Your order is delivered 🎉", `<p>Thank you for your purchase — your order is complete. Here are your delivery details:</p>${deliveryBlock(delivered)}${deliverNote.trim() ? `<p style="background:#fff8e6;border:1px solid #ffe2a8;border-radius:12px;padding:12px;font-size:14px">${deliverNote.trim()}</p>` : ""}<p style="color:#8a8ca3;font-size:12px">Order ID: ${deliverFor.orderId} · Total: $${Number(deliverFor.total || 0).toFixed(2)}</p>`, { preheader: "Your items are ready", badge: "Delivered", ctaText: "View my order", ctaUrl: `${(config.siteUrl || websiteUrl()).replace(/\/+$/, "")}/orders` }),
-        receipt: { orderId: deliverFor.orderId, siteName: config.siteName || "Silvex AI", total: Number(deliverFor.total || 0), note: deliverNote.trim() || undefined, items: delivered },
-      }).then((result) => { if (!result.ok) notify(`Email not sent: ${result.error}`); });
-      void notifyTelegramOrder({ data: { orderId: deliverFor.orderId, email: deliverFor.email || undefined, total: Number(deliverFor.total || 0), status: "Completed", items: items.map((item) => ({ title: item.title, qty: item.qty })), delivered, uid: deliverFor.uid } }).catch(() => undefined);
+      await update(ref(db, `orders/${deliverFor.orderId}`), {
+        delivered,
+        deliveryNote: deliverNote.trim(),
+        status: "Completed",
+        deliveredAt: new Date().toISOString(),
+      });
+      if (deliverFor.email)
+        void sendMail(db, {
+          to: deliverFor.email,
+          subject: `${config.siteName || "Silvex AI"} · Order ${deliverFor.orderId.slice(-6)} delivered`,
+          html: emailShell(
+            config.siteName || "Silvex AI",
+            "Your order is delivered 🎉",
+            `<p>Thank you for your purchase — your order is complete. Here are your delivery details:</p>${deliveryBlock(delivered)}${deliverNote.trim() ? `<p style="background:#fff8e6;border:1px solid #ffe2a8;border-radius:12px;padding:12px;font-size:14px">${deliverNote.trim()}</p>` : ""}<p style="color:#8a8ca3;font-size:12px">Order ID: ${deliverFor.orderId} · Total: $${Number(deliverFor.total || 0).toFixed(2)}</p>`,
+            {
+              preheader: "Your items are ready",
+              badge: "Delivered",
+              ctaText: "View my order",
+              ctaUrl: `${(config.siteUrl || websiteUrl()).replace(/\/+$/, "")}/orders`,
+            },
+          ),
+          receipt: {
+            orderId: deliverFor.orderId,
+            siteName: config.siteName || "Silvex AI",
+            total: Number(deliverFor.total || 0),
+            note: deliverNote.trim() || undefined,
+            items: delivered,
+          },
+        }).then((result) => {
+          if (!result.ok) notify(`Email not sent: ${result.error}`);
+        });
+      void notifyTelegramOrder({
+        data: {
+          orderId: deliverFor.orderId,
+          email: deliverFor.email || undefined,
+          total: Number(deliverFor.total || 0),
+          status: "Completed",
+          items: items.map((item) => ({ title: item.title, qty: item.qty })),
+          delivered,
+          uid: deliverFor.uid,
+        },
+      }).catch(() => undefined);
       setDeliverFor(null);
       showSuccess("Delivered", "The buyer can now see the delivery details.");
-    } finally { setDelivering(false); }
+    } finally {
+      setDelivering(false);
+    }
   }
 
   function exportFilteredRows(): ExportRow[] {
     return filtered.flatMap((order) => {
       const items = order.items || [];
-      if (!items.length) return [{ orderId: order.orderId, date: order.date, buyer: order.email || order.uid, product: "—", delivery: "—", amount: Number(order.total) || 0, status: order.status }];
+      if (!items.length)
+        return [
+          {
+            orderId: order.orderId,
+            date: order.date,
+            buyer: order.email || order.uid,
+            product: "—",
+            delivery: "—",
+            amount: Number(order.total) || 0,
+            status: order.status,
+          },
+        ];
       return items.map((item, index) => ({
-        orderId: order.orderId, date: order.date, buyer: order.email || order.uid,
-        product: `${item.title} × ${item.qty}`, delivery: deliveryOf(item),
+        orderId: order.orderId,
+        date: order.date,
+        buyer: order.email || order.uid,
+        product: `${item.title} × ${item.qty}`,
+        delivery: deliveryOf(item),
         amount: item.price != null ? Number(item.price) * Number(item.qty || 1) : index === 0 ? Number(order.total) || 0 : 0,
         status: order.status,
       }));
     });
   }
 
-  return <div className="space-y-3">
-    <input className={input} placeholder="Search by order ID, user name, user ID or email…" value={query} onChange={(event) => setQuery(event.target.value)} />
-    <div className="grid grid-cols-2 gap-2">
-      <button onClick={() => exportOrdersCsv(exportFilteredRows(), `orders-${Date.now()}.csv`)} className="rounded-xl bg-card py-2.5 text-xs font-bold shadow-sm">Download CSV</button>
-      <button onClick={() => exportOrdersPdf(exportFilteredRows(), `${config.siteName || "Store"} — orders report`, `orders-${Date.now()}.pdf`)} className="rounded-xl bg-card py-2.5 text-xs font-bold shadow-sm">Download PDF</button>
-    </div>
-    <button onClick={downloadFullStatement} className="w-full rounded-xl bg-primary py-2.5 text-xs font-bold text-primary-foreground">Download full statement (all orders + all wallet changes)</button>
-    {filtered.map((order) => <div key={order.orderId} className="rounded-2xl border border-border bg-card p-4">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs font-bold"><span className="truncate">#{order.orderId.slice(-6)}</span><span>{order.status}</span></div>
-      <p className="mt-1 break-words text-xs text-muted-foreground">{userNames[order.uid] ? `${userNames[order.uid]} · ` : ""}{order.email} · {order.phone}</p>
-      <ul className="my-2 text-sm">{(order.items || []).map((item, index) => <li key={index}>{item.title} × {item.qty}</li>)}</ul>
-      <p className="text-lg font-black">${order.total}</p>
-      {order.delivered?.length ? <div className="mt-2 space-y-1 rounded-xl bg-muted/60 p-2 text-[11px]"><div className="flex items-center justify-between"><b>Delivery</b><button onClick={() => downloadDeliveryTxt(order)} className="rounded-lg bg-primary px-2 py-1 text-[10px] font-bold text-primary-foreground">Download .txt</button></div>{order.delivered.map((item, index) => <p key={index} className="break-all"><b>{item.title}:</b> {item.content}</p>)}</div> : null}
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <button onClick={() => openDelivery(order)} className="rounded-lg bg-emerald-500 py-2 text-xs font-bold text-white">{order.status === "Completed" ? "Edit delivery" : "Complete delivery"}</button>
-        <button onClick={() => db && update(ref(db, `orders/${order.orderId}`), { status: "Cancelled" }).then(() => notify("Order marked Cancelled"))} className="rounded-lg bg-destructive py-2 text-xs font-bold text-destructive-foreground">Cancel</button>
+  return (
+    <div className="space-y-4">
+      {/* Toolbar */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search order ID, name, user ID, email…"
+            className="pl-9"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => exportOrdersCsv(exportFilteredRows(), `orders-${Date.now()}.csv`)}>
+            <Download className="size-4" /> CSV
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              exportOrdersPdf(exportFilteredRows(), `${config.siteName || "Store"} — orders report`, `orders-${Date.now()}.pdf`)
+            }
+          >
+            <FileText className="size-4" /> PDF
+          </Button>
+          <Button variant="secondary" size="sm" onClick={downloadFullStatement}>
+            Statement
+          </Button>
+        </div>
       </div>
-      {deliverFor?.orderId === order.orderId ? <div className="mt-3 space-y-2 rounded-xl border border-border p-3">
-        <p className="text-xs font-black">Delivery details</p>
-        {(order.items || []).map((item, index) => <label key={index} className="block text-[11px] font-bold text-muted-foreground">{item.title} × {item.qty}<textarea className={`${input} mt-1`} rows={2} value={deliverLines[index] ?? ""} onChange={(event) => { const next = [...deliverLines]; next[index] = event.target.value; setDeliverLines(next); }} /></label>)}
-        <textarea className={input} rows={2} placeholder="Note for the buyer (optional)" value={deliverNote} onChange={(event) => setDeliverNote(event.target.value)} />
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2"><button disabled={delivering} onClick={completeDelivery} className="rounded-lg bg-emerald-500 py-2 text-xs font-bold text-white disabled:opacity-60">{delivering ? "Sending…" : "Mark delivered & notify buyer"}</button><button onClick={() => setDeliverFor(null)} className="rounded-lg bg-muted px-3 py-2 text-xs font-bold">Close</button></div>
-      </div> : null}
-    </div>)}
-    {!filtered.length ? <Empty text={orders.length ? "No orders match your search." : "No orders yet."} /> : null}
-  </div>;
+
+      {!filtered.length ? (
+        <Empty text={orders.length ? "No orders match your search." : "No orders yet."} />
+      ) : (
+        <Card className="gap-0 overflow-hidden py-0">
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order</TableHead>
+                  <TableHead>Buyer</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((order) => (
+                  <Fragment key={order.orderId}>
+                    <TableRow>
+                      <TableCell className="font-mono text-xs">#{order.orderId.slice(-6)}</TableCell>
+                      <TableCell className="max-w-[180px]">
+                        <p className="truncate text-sm font-medium">
+                          {userNames[order.uid] || order.email || order.uid}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {order.email} {order.phone ? `· ${order.phone}` : ""}
+                        </p>
+                      </TableCell>
+                      <TableCell className="max-w-[220px]">
+                        <p className="truncate text-sm text-muted-foreground">
+                          {(order.items || []).map((i) => `${i.title} ×${i.qty}`).join(", ") || "—"}
+                        </p>
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">${order.total}</TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1.5">
+                          {order.delivered?.length ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 px-2"
+                              onClick={() => downloadDeliveryTxt(order)}
+                              aria-label="Download delivery"
+                            >
+                              <Download className="size-4" />
+                            </Button>
+                          ) : null}
+                          <Button size="sm" variant="outline" className="h-8" onClick={() => openDelivery(order)}>
+                            {order.status === "Completed" ? "Edit" : "Deliver"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 text-destructive hover:bg-destructive/10"
+                            onClick={() =>
+                              db &&
+                              update(ref(db, `orders/${order.orderId}`), { status: "Cancelled" }).then(() =>
+                                notify("Order marked Cancelled"),
+                              )
+                            }
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {deliverFor?.orderId === order.orderId ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="bg-muted/30">
+                          <div className="space-y-3 py-2">
+                            <p className="text-sm font-semibold">Delivery details</p>
+                            {(order.items || []).map((item, index) => (
+                              <div key={index}>
+                                <Label className="mb-1 text-xs text-muted-foreground">
+                                  {item.title} × {item.qty}
+                                </Label>
+                                <Textarea
+                                  rows={2}
+                                  value={deliverLines[index] ?? ""}
+                                  onChange={(e) => {
+                                    const next = [...deliverLines];
+                                    next[index] = e.target.value;
+                                    setDeliverLines(next);
+                                  }}
+                                />
+                              </div>
+                            ))}
+                            <Textarea
+                              rows={2}
+                              placeholder="Note for the buyer (optional)"
+                              value={deliverNote}
+                              onChange={(e) => setDeliverNote(e.target.value)}
+                            />
+                            <div className="flex gap-2">
+                              <Button disabled={delivering} onClick={completeDelivery}>
+                                {delivering ? "Sending…" : "Mark delivered & notify buyer"}
+                              </Button>
+                              <Button variant="outline" onClick={() => setDeliverFor(null)}>
+                                Close
+                              </Button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
 }
