@@ -110,7 +110,9 @@ export function ProductsAdmin({ products }: { products: Product[] }) {
       notify("Product added");
       if (created.key) await announce("new", created.key);
     }
-    if (linked) await runSync();
+    // Refresh supplier prices/stock in the background — a full catalogue sync
+    // can take a minute, and the product's own fields are already saved above.
+    if (linked) void runSync();
     setForm(emptyProduct);
     setBulk("");
   }

@@ -76,7 +76,10 @@ export function ProductEditor({ product }: { product: Product }) {
         notify("Product added");
       } else {
         await update(ref(db, `products/${product.id}`), data);
-        if (form.delivery === "supplier") await syncSupplier().catch(() => undefined);
+        // The product's own fields (incl. the recomputed price) are saved above.
+        // A full supplier catalogue sync can take a minute or more, so run it in
+        // the background instead of blocking the Save button on it.
+        if (form.delivery === "supplier") void syncSupplier().catch(() => undefined);
         notify("Product updated");
       }
       await navigate({ to: "/admin/products" });
