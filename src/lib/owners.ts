@@ -1,48 +1,36 @@
 /**
- * Owner / revoked-admin email lists.
+ * Owner / revoked-admin email lists — server side only, read at call time.
  *
- * Configured through environment variables so no address is baked into the
- * source. Set them as comma-separated lists:
- *   OWNER_EMAILS            (server)   + VITE_OWNER_EMAILS            (browser)
- *   REVOKED_ADMIN_EMAILS    (server)   + VITE_REVOKED_ADMIN_EMAILS    (browser)
- * The VITE_ copies are required for the client bundle, since Vite only exposes
- * VITE_-prefixed variables to the browser. Both are optional; missing lists
- * simply mean "no permanent owners / none revoked".
+ *   OWNER_EMAILS          comma-separated owner emails
+ *   REVOKED_ADMIN_EMAILS  comma-separated emails that never get admin
+ *
+ * Read through globalThis.process so the build never inlines a value: changing
+ * the variable on the host and restarting is enough, no rebuild. In the browser
+ * these lists are always empty — the website asks the server (cloudWhoami →
+ * staff) whether the signed-in user is an admin.
  */
-function envList(...names: string[]): string[] {
-  for (const name of names) {
-    // import.meta.env for the browser bundle, process.env on the server.
-    const raw =
-      (typeof import.meta !== "undefined" && (import.meta as any).env?.[name]) ??
-      (typeof process !== "undefined" ? process.env?.[name] : undefined);
-    if (raw) {
-      return String(raw)
-        .split(/[,\s]+/)
-        .map((e) => e.trim().toLowerCase())
-        .filter(Boolean);
-    }
-  }
-  return [];
+function serverList(name: string): string[] {
+  if (typeof window !== "undefined") return [];
+  const raw = (globalThis as any)?.process?.env?.[name];
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  return raw
+    .split(/[,\s]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
 }
 
-/**
- * Permanent owners of the store. They always keep full admin access and nobody
- * can grant admin to others.
- */
-export const PERMANENT_OWNER_EMAILS: string[] = envList("VITE_OWNER_EMAILS", "OWNER_EMAILS");
-
-/** Former admins whose access is permanently removed, even if old data says otherwise. */
-export const REVOKED_ADMIN_EMAILS: string[] = envList(
-  "VITE_REVOKED_ADMIN_EMAILS",
-  "REVOKED_ADMIN_EMAILS",
-);
+export const ownerEmails = (): string[] => serverList("OWNER_EMAILS");
+export const revokedAdminEmails = (): string[] => serverList("REVOKED_ADMIN_EMAILS");
 
 const norm = (e?: string | null) => String(e ?? "").trim().toLowerCase();
 
+/** Server only: is this email a store owner right now? */
 export function isPermanentOwner(email?: string | null): boolean {
-  return PERMANENT_OWNER_EMAILS.includes(norm(email));
+  const e = norm(email);
+  return !!e && ownerEmails().includes(e) && !revokedAdminEmails().includes(e);
 }
 
+/** Server only: is this email permanently refused admin? */
 export function isRevokedAdmin(email?: string | null): boolean {
-  return REVOKED_ADMIN_EMAILS.includes(norm(email));
+  return revokedAdminEmails().includes(norm(email));
 }

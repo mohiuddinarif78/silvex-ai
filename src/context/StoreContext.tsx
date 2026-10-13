@@ -14,7 +14,7 @@ import type { Database } from "@/lib/fb/database";
 import { toast } from "sonner";
 import { getFirebase } from "@/lib/firebase";
 
-import { PERMANENT_OWNER_EMAILS, isPermanentOwner, isRevokedAdmin } from "@/lib/owners";
+import { isPermanentOwner } from "@/lib/owners";
 import { applyReferralConfig } from "@/lib/referral";
 import { slotChar } from "@/lib/web-emoji";
 import { readStoreSnapshot } from "@/context/store-prime";
@@ -206,24 +206,15 @@ g.__rkrStoreContext = StoreContext;
 
 const CART_KEY = "rkr_cart_v1";
 
-export { PERMANENT_OWNER_EMAILS, isPermanentOwner } from "@/lib/owners";
-import { PERMANENT_OWNER_EMAILS as OWNER_EMAILS_ENV } from "@/lib/owners";
-
-/** Store owners, sourced from env (VITE_OWNER_EMAILS). Empty on a fresh store. */
-export const DEFAULT_OWNER_EMAILS = OWNER_EMAILS_ENV;
-/** First configured owner, if any; kept for backwards compatibility. */
-export const FIXED_OWNER_EMAIL = OWNER_EMAILS_ENV[0] ?? "";
+export { isPermanentOwner } from "@/lib/owners";
 let ownerEmails: string[] = [];
 
+/** Display-only list from Settings (config.ownerEmails). Grants nothing — admin
+ *  rights are decided on the server from OWNER_EMAILS (see cloudWhoami). */
 export function applyOwnerEmails(list?: string | string[] | null) {
-  const parsed = (Array.isArray(list) ? list : String(list ?? "").split(/[,\s]+/))
+  ownerEmails = (Array.isArray(list) ? list : String(list ?? "").split(/[,\s]+/))
     .map((e) => String(e).trim().toLowerCase())
     .filter(Boolean);
-  ownerEmails = parsed.length ? parsed : [...DEFAULT_OWNER_EMAILS];
-  for (const e of PERMANENT_OWNER_EMAILS) {
-    if (!ownerEmails.includes(e)) ownerEmails = [e, ...ownerEmails];
-  }
-  ownerEmails = ownerEmails.filter((e) => !isRevokedAdmin(e));
 }
 
 export function isFixedOwner(email?: string | null) {
@@ -231,7 +222,6 @@ export function isFixedOwner(email?: string | null) {
 }
 
 export function isOwnerEmail(email?: string | null) {
-  if (isRevokedAdmin(email)) return false;
   return isFixedOwner(email) || Boolean(email && ownerEmails.includes(email.toLowerCase()));
 }
 
@@ -367,13 +357,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Admin rights are decided only by the server (OWNER_EMAILS + verified email).
+  // Never trust a list baked into the bundle or an isAdmin flag stored on the
+  // profile — both used to keep removed owners showing as admins.
+  const [serverStaff, setServerStaff] = useState(false);
+  useEffect(() => {
+    if (!user) {
+      setServerStaff(false);
+      return;
+    }
+    let alive = true;
+    void import("@/lib/clouddb.functions")
+      .then(({ cloudWhoami }) => cloudWhoami())
+      .then((w) => {
+        if (alive) setServerStaff(Boolean(w?.staff));
+      })
+      .catch(() => {
+        if (alive) setServerStaff(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+
   // Products and full settings are admin-only in the database. Admins get
   // them live; customers get the server's cleaned copy, refreshed regularly.
-  const adminNow = isFixedOwner(user?.email)
-    ? true
-    : isRevokedAdmin(user?.email)
-      ? false
-      : Boolean(profile?.isAdmin);
+  const adminNow = serverStaff;
   useEffect(() => {
     if (!db) return;
     const toList = (val: Record<string, any>) =>
@@ -466,21 +475,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         offProfile();
         offAlerts();
       };
-      if (isFixedOwner(user.email)) {
-        update(ref(db, `users/${user.uid}`), {
-          isAdmin: true,
-          isOwner: true,
-          ownerRevoked: null,
-        }).catch(() => {});
-      } else if (isOwnerEmail(user.email)) {
-        const snap = await get(ref(db, `users/${user.uid}/ownerRevoked`)).catch(() => null);
-        if (!snap?.val()) {
-          update(ref(db, `users/${user.uid}`), { isAdmin: true, isOwner: true }).catch(() => {});
-        }
-      }
-
-      // Owners come only from OWNER_EMAILS (env) + a role row; there is no
-      // "first account becomes owner" rule.
+      // No isAdmin/isOwner flags are written here: admin rights live only on
+      // the server (OWNER_EMAILS), so stale flags can never grant access.
     })();
 
     return () => unsub();
@@ -553,13 +549,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       wallet: Number(profile?.wallet ?? 0),
-      isAdmin: isFixedOwner(user?.email)
-        ? true
-        : isRevokedAdmin(user?.email)
-          ? false
-          : profile?.ownerRevoked
-            ? Boolean(profile?.isAdmin)
-            : Boolean(profile?.isAdmin) || isOwnerEmail(user?.email),
+      isAdmin: serverStaff,
       products,
       config,
       categories:
@@ -607,6 +597,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     db,
     user,
     profile,
+    serverStaff,
     products,
     config,
     slotEmojis,

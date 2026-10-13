@@ -2,7 +2,7 @@
  * Who is calling, and what may they read or write?
  * Replaces the old Firebase security rules with the same rules in code.
  */
-import { PERMANENT_OWNER_EMAILS, REVOKED_ADMIN_EMAILS } from "./owners";
+import { isPermanentOwner } from "./owners";
 
 export type Caller = { authId: string; uid: string; email: string; staff: boolean } | null;
 
@@ -55,10 +55,8 @@ export async function callerFromToken(token: string | null | undefined): Promise
  * control.
  */
 async function syncOwnerRoles(db: any, user: any, email: string): Promise<boolean> {
-  const owners = PERMANENT_OWNER_EMAILS.map((e) => e.toLowerCase());
-  const revoked = REVOKED_ADMIN_EMAILS.map((e) => e.toLowerCase());
   const verified = Boolean(user.email_confirmed_at || user.confirmed_at);
-  const isOwner = !!email && verified && owners.includes(email) && !revoked.includes(email);
+  const isOwner = verified && isPermanentOwner(email);
 
   const { data: rows } = await db.from("user_roles").select("role").eq("user_id", user.id);
   const have = new Set((rows || []).map((r: any) => String(r.role)));

@@ -15,10 +15,10 @@ Railway → Variables).
 
 ## 2. Owners
 
-- Website admin = a verified login whose email is in `OWNER_EMAILS` and
-  `VITE_OWNER_EMAILS`. Nothing to edit in the database: the server creates or
+- Website admin = a verified login whose email is in `OWNER_EMAILS` (server
+  env, read at runtime). Nothing to edit in the database: the server creates or
   removes the `user_roles` rows on login. Keep "Confirm email" on in Supabase
-  Auth. After changing `VITE_OWNER_EMAILS`, redeploy (it is baked into the build).
+  Auth. After changing `OWNER_EMAILS`, restart the service (no rebuild needed).
 - Bot admins = Settings → Telegram owner IDs, or `TELEGRAM_OWNER_IDS`. There is
   no "first person who opens the bot becomes owner" rule.
 

@@ -71,10 +71,10 @@ export const cloudWrite = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-/** The signed-in customer's store id and email. */
+/** The signed-in customer's store id, email, and whether the server treats them as admin. */
 export const cloudWhoami = createServerFn({ method: "POST" }).handler(async () => {
   const c = await caller();
-  return c ? { uid: c.uid, email: c.email } : null;
+  return c ? { uid: c.uid, email: c.email, staff: c.staff } : null;
 });
 
 /**

@@ -21,8 +21,7 @@ export const savePushSubscription = createServerFn({ method: "POST" })
     const uid = who.uid;
     const { dbGet, dbPut } = await import("./telegram.server");
     const { subKey } = await import("./push.server");
-    const profile = await dbGet<{ isAdmin?: boolean; isOwner?: boolean }>(`users/${uid}`);
-    const admin = who.staff || !!profile?.isAdmin || !!profile?.isOwner;
+    const admin = who.staff;
     await dbPut(`pushSubs/${uid}/${subKey(data.sub.endpoint)}`, { ...data.sub, admin, at: Date.now() });
     return { ok: true as const, admin };
   });
