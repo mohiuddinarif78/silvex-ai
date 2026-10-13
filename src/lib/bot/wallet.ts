@@ -51,12 +51,26 @@ export async function walletHistory(chatId: number) {
 export async function startDeposit(chatId: number) {
   await ensureUser(chatId);
   const c = await cfg();
-  await setState(chatId, { k: "dep_hash" });
-  const rows: any[][] = [];
+  // Clear any pending "paste the hash" state — this is the chooser screen now.
+  await setState(chatId, null);
+  const rows: any[][] = [[{ text: "🪙 Crypto (USDT)", callback_data: "depcrypto" }]];
   if (String(c.razorpayKeyId || "").trim()) {
     rows.push([{ text: "💳 Pay by card / UPI", callback_data: "depcard" }]);
   }
-  rows.push([{ text: "❌ Cancel", callback_data: "home" }]);
+  rows.push([{ text: "⬅️ Back to Shop", callback_data: "home" }]);
+  await say(
+    chatId,
+    "➕ <b>Add funds</b>\n\nChoose how you want to top up your wallet:",
+    { inline_keyboard: rows },
+  );
+}
+
+/** Crypto (USDT/USDC) top-up: show the deposit address and wait for a TX hash. */
+export async function startCryptoDeposit(chatId: number) {
+  await ensureUser(chatId);
+  const c = await cfg();
+  await setState(chatId, { k: "dep_hash" });
+  const rows: any[][] = [[{ text: "⬅️ Back", callback_data: "dep" }], [{ text: "❌ Cancel", callback_data: "home" }]];
 
   // Binance transfers are checked straight in the store's Binance account.
   let binance = "";
@@ -78,7 +92,7 @@ export async function startDeposit(chatId: number) {
 
   await say(
     chatId,
-    `➕ <b>Deposit</b>\n\nSend USDT / USDC (BEP20, Polygon or Ethereum) to:\n<code>${c.depositAddress || "-"}</code>\n\nThen send the transaction hash (TXID) here. Payments confirmed within 10 minutes are credited automatically.${binance}`,
+    `🪙 <b>Crypto deposit (USDT / USDC)</b>\n\nSend USDT / USDC (BEP20, Polygon or Ethereum) to:\n<code>${c.depositAddress || "-"}</code>\n\nThen send the transaction hash (TXID) here. Payments confirmed within 10 minutes are credited automatically.${binance}`,
     { inline_keyboard: rows },
   );
 }
