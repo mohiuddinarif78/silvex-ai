@@ -52,6 +52,9 @@ async function build(): Promise<StoreSnapshot> {
   const products: Record<string, any> = {};
   for (const [id, p] of Object.entries((rawProducts || {}) as Record<string, any>)) {
     if (!p || typeof p !== "object") continue;
+    // Skip "ghost" rows left behind by a delete that raced a supplier sync
+    // (price/stock but no title) — they would show as empty cards otherwise.
+    if (String((p as Record<string, any>)["title"] || "").trim() === "") continue;
     const { stock, usedStock, ...rest } = p as Record<string, any>;
     const left = Array.isArray(stock) ? stock.filter(Boolean).length : 0;
     if (typeof rest["logo"] === "string" && (rest["logo"] as string).startsWith("data:")) {

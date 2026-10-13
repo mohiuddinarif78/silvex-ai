@@ -166,6 +166,10 @@ function pullProducts(): Promise<void> {
       for (const [id, raw] of Object.entries(v || {})) {
         const p = raw as any;
         if (!p) continue;
+        // Skip "ghost" rows left behind by a delete that raced a supplier sync
+        // (price/stock but no title) — they must never appear as "Item" buttons
+        // anywhere in the bot. Real products always have a title.
+        if (String(p.title || "").trim() === "") continue;
         const bp = Number(p.botPrice);
         const base = bp > 0 ? bp : p.price;
         out[id] = { ...p, price: flashOn && fs!.pid === id ? Number(fs!.price) : base, hidden: p.hidden === true || p.hideBot === true };

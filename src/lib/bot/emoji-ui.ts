@@ -25,14 +25,15 @@ import { allProducts, say, setState } from "./core";
 const EM_PAGE = 12;
 
 /**
- * Hide "ghost" product rows — ones left with no title but a non-manual
- * delivery, created when a product is deleted while a supplier sync patch is
- * mid-flight. They would otherwise show as blank "Item" buttons here.
+ * Hide "ghost" product rows — ones left with no title, created when a product
+ * is deleted while a supplier sync patch is mid-flight (the patch rewrites a
+ * partial row with price/stock but no title; a title-less row reads back with
+ * delivery defaulting to "manual"). Real products always have a title (enforced
+ * on save and import), so a blank title is a reliable ghost marker regardless
+ * of delivery type. They would otherwise show as blank "Item" buttons here.
  */
 function liveProducts(all: Record<string, any>): [string, any][] {
-  return Object.entries(all).filter(
-    ([, p]) => p && (String(p.title || "").trim() !== "" || String(p.delivery || "manual") === "manual"),
-  );
+  return Object.entries(all).filter(([, p]) => p && String(p.title || "").trim() !== "");
 }
 
 /** Show the saved custom emoji on setup buttons, not just in the shop. */

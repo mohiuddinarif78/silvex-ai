@@ -87,9 +87,11 @@ export async function importProvider(
 
   // Ghost rows (a product deleted while a supplier sync patch was mid-flight:
   // price/stock only, no title) are cleaned up here too, not just in
-  // syncAllProviders — otherwise they linger as blank "Item" buttons.
+  // syncAllProviders — otherwise they linger as blank "Item" buttons / empty
+  // cards. A title-less row reads back as delivery "manual", so match on the
+  // missing title alone (real products always have a title).
   for (const [key, p] of Object.entries(existing || {})) {
-    if (p && String(p.title || "").trim() === "" && String(p.delivery || "manual") !== "manual") {
+    if (p && String(p.title || "").trim() === "") {
       await dbPut(`products/${key}`, null);
       delete (existing as any)[key];
       removed++;
@@ -206,9 +208,11 @@ export async function syncAllProviders(force = true): Promise<{
 
   const products = (await dbGet<Record<string, any>>("products")) || {};
   const deleted = (await dbGet<Record<string, boolean>>("site_settings/apiDeleted").catch(() => null)) || {};
-  // Ghost rows (deleted mid-sync: price only, no title) are cleaned up, never refreshed.
+  // Ghost rows (deleted mid-sync: price only, no title) are cleaned up, never
+  // refreshed. A title-less row reads back as delivery "manual", so match on
+  // the missing title alone — real products always have a title.
   for (const [id, p] of Object.entries(products)) {
-    if (p && String(p.title || "").trim() === "" && String(p.delivery || "") !== "manual") {
+    if (p && String(p.title || "").trim() === "") {
       await dbPut(`products/${id}`, null);
       delete (products as any)[id];
     }
