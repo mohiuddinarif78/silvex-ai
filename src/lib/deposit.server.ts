@@ -1,4 +1,4 @@
-/** Server-only on-chain deposit verification (BEP20 + Polygon USDT/USDC). */
+/** Server-only on-chain deposit verification (BEP20 + Polygon + Ethereum USDT/USDC). */
 
 /**
  * Fallback deposit wallet when Settings → Deposit address is empty.
@@ -13,7 +13,7 @@ export const defaultDepositAddress = (): string => {
 const TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
-export type ChainKey = "bep20" | "polygon";
+export type ChainKey = "bep20" | "polygon" | "ethereum";
 
 export const CHAINS: Record<
   ChainKey,
@@ -26,7 +26,13 @@ export const CHAINS: Record<
 > = {
   bep20: {
     label: "BNB Chain (BEP20)",
-    rpc: ["https://bsc-dataseed.binance.org", "https://bsc-rpc.publicnode.com"],
+    rpc: [
+      "https://bsc-dataseed.binance.org",
+      "https://bsc-rpc.publicnode.com",
+      "https://bsc-dataseed1.defibit.io",
+      "https://bsc-dataseed1.ninicoin.io",
+      "https://1rpc.io/bnb",
+    ],
     minConfirmations: 15,
     tokens: {
       "0x55d398326f99059ff775485246999027b3197955": { symbol: "USDT", decimals: 18 },
@@ -35,12 +41,33 @@ export const CHAINS: Record<
   },
   polygon: {
     label: "Polygon",
-    rpc: ["https://polygon-bor-rpc.publicnode.com", "https://1rpc.io/matic"],
+    rpc: [
+      "https://polygon-bor-rpc.publicnode.com",
+      "https://1rpc.io/matic",
+      "https://polygon-rpc.com",
+      "https://rpc.ankr.com/polygon",
+      "https://polygon.drpc.org",
+    ],
     minConfirmations: 30,
     tokens: {
       "0xc2132d05d31c914a87c6611c10748aeb04b58e8f": { symbol: "USDT", decimals: 6 },
       "0x2791bca1f2de4661ed88a30c99a7a9449aa84174": { symbol: "USDC", decimals: 6 },
       "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": { symbol: "USDC", decimals: 6 },
+    },
+  },
+  ethereum: {
+    label: "Ethereum",
+    rpc: [
+      "https://ethereum-rpc.publicnode.com",
+      "https://eth.llamarpc.com",
+      "https://1rpc.io/eth",
+      "https://rpc.ankr.com/eth",
+      "https://eth.drpc.org",
+    ],
+    minConfirmations: 12,
+    tokens: {
+      "0xdac17f958d2ee523a2206206994597c13d831ec7": { symbol: "USDT", decimals: 6 },
+      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": { symbol: "USDC", decimals: 6 },
     },
   },
 };
@@ -71,8 +98,15 @@ async function rpc(chain: ChainKey, method: string, params: unknown[]): Promise<
 /**
  * Confirm a receipt against a SECOND, independent RPC so we never auto-credit
  * on the word of a single (possibly compromised) endpoint. Returns true only
- * when another endpoint agrees the tx succeeded in the same block. If no second
- * endpoint is reachable, returns false (caller falls back to manual approval).
+ * when another endpoint agrees the tx succeeded in the same block.
+ *
+ * A freshly-mined transaction has often not propagated to every node yet, so a
+ * single quick check against one other endpoint produced false negatives (the
+ * deposit dropped to manual review even though it was valid). We now poll every
+ * other endpoint, with a couple of short retries, until one independent node
+ * confirms — the security rule ("a second endpoint must agree") is unchanged,
+ * only its reliability improves. If none ever agrees, returns false and the
+ * caller falls back to manual approval.
  */
 async function receiptAgreedBySecondRpc(
   chain: ChainKey,
@@ -81,15 +115,22 @@ async function receiptAgreedBySecondRpc(
 ): Promise<boolean> {
   const [primary, ...others] = CHAINS[chain].rpc;
   void primary;
-  for (const url of others) {
-    try {
-      const r = await rpcAt(url, "eth_getTransactionReceipt", [hash]);
-      if (r && r.status === "0x1" && String(r.blockNumber).toLowerCase() === String(expectBlock).toLowerCase()) {
-        return true;
+  if (!others.length) return false;
+  const want = String(expectBlock).toLowerCase();
+  // Up to 3 passes with a short wait between them, to let a brand-new tx reach
+  // the other nodes before we give up and send it to manual review.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const url of others) {
+      try {
+        const r = await rpcAt(url, "eth_getTransactionReceipt", [hash]);
+        if (r && r.status === "0x1" && String(r.blockNumber).toLowerCase() === want) {
+          return true;
+        }
+      } catch {
+        /* try next endpoint */
       }
-    } catch {
-      /* try next */
     }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 2500));
   }
   return false;
 }

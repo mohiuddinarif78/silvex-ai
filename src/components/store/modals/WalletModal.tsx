@@ -35,7 +35,7 @@ export function WalletModal() {
   const [tab, setTab] = useState<"deposit" | "withdraw" | "history">("deposit");
   const [amount, setAmount] = useState("");
   const [txHash, setTxHash] = useState("");
-  const [chain, setChain] = useState<"bep20" | "polygon">("bep20");
+  const [chain, setChain] = useState<"bep20" | "polygon" | "ethereum">("bep20");
   const [checking, setChecking] = useState(false);
   const [copied, setCopied] = useState(false);
   const [upi, setUpi] = useState("");
@@ -204,7 +204,7 @@ export function WalletModal() {
     setChecking(true);
     try {
       const res = await submitCryptoDeposit({
-        data: { idToken: await user.getIdToken(), hash, chain: chain as "bep20" | "polygon", name: profile?.name ?? undefined },
+        data: { idToken: await user.getIdToken(), hash, chain: chain as "bep20" | "polygon" | "ethereum", name: profile?.name ?? undefined },
       });
       if (!res.ok) return notify(res.message);
       closeModal();
@@ -409,6 +409,7 @@ export function WalletModal() {
               [
                 ["bep20", "BEP20 (BNB)"],
                 ["polygon", "Polygon"],
+                ["ethereum", "Ethereum"],
               ] as const
             ).map(([key, label]) => (
               <button

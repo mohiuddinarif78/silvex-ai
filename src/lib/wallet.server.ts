@@ -280,7 +280,7 @@ export async function cancelOrder(uid: string, orderId: string) {
 export async function creditCryptoDeposit(
   uid: string,
   email: string,
-  input: { hash: string; chain: "bep20" | "polygon"; name?: string | undefined },
+  input: { hash: string; chain: "bep20" | "polygon" | "ethereum"; name?: string | undefined },
 ) {
   const c = (await dbGet<any>("site_settings/config")) || {};
   const { defaultDepositAddress, verifyDepositOnChain } = await import("./deposit.server");

@@ -49,7 +49,7 @@ export const submitCryptoDeposit = createServerFn({ method: "POST" })
       .object({
         idToken: token,
         hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
-        chain: z.enum(["bep20", "polygon"]),
+        chain: z.enum(["bep20", "polygon", "ethereum"]),
         name: z.string().max(100).optional(),
       })
       .parse(d),

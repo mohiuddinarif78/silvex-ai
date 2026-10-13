@@ -78,7 +78,7 @@ export async function startDeposit(chatId: number) {
 
   await say(
     chatId,
-    `➕ <b>Deposit</b>\n\nSend USDT / USDC (BEP20 or Polygon) to:\n<code>${c.depositAddress || "-"}</code>\n\nThen send the transaction hash (TXID) here. Payments confirmed within 10 minutes are credited automatically.${binance}`,
+    `➕ <b>Deposit</b>\n\nSend USDT / USDC (BEP20, Polygon or Ethereum) to:\n<code>${c.depositAddress || "-"}</code>\n\nThen send the transaction hash (TXID) here. Payments confirmed within 10 minutes are credited automatically.${binance}`,
     { inline_keyboard: rows },
   );
 }

@@ -310,7 +310,7 @@ export async function buildSupportReply(
     `- Plain text only, no markdown. Keep it under 80 words unless details are needed.\n\n` +
     `Store facts:\n` +
     `Website: ${siteUrl() || "-"}\n` +
-    `Crypto deposits: USDT/USDC on BEP20 or Polygon to ${c.depositAddress || "-"} (credited automatically within 10 minutes, older ones go to an owner).\n` +
+    `Crypto deposits: USDT/USDC on BEP20, Polygon or Ethereum to ${c.depositAddress || "-"} (credited automatically within 10 minutes, older ones go to an owner).\n` +
     `Card / UPI top-ups: ${String(c.razorpayKeyId || "").trim() ? "available" : "not available"}.\n` +
     `Customer wallet: ${money(Number(user?.wallet || 0))}. Email: ${user?.email || "not set"}.\n\n` +
     `Products (id — title — price):\n${catalogue || "none"}\n\n` +

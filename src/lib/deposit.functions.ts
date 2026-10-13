@@ -19,9 +19,9 @@ export const checkDeposit = createServerFn({ method: "POST" })
     const chain = String(input.chain || "").trim();
     const address = String(input.address || "").trim();
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error("That does not look like a transaction hash.");
-    if (chain !== "bep20" && chain !== "polygon") throw new Error("Unknown network.");
+    if (chain !== "bep20" && chain !== "polygon" && chain !== "ethereum") throw new Error("Unknown network.");
     if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error("Deposit address is not valid.");
-    return { hash, chain: chain as "bep20" | "polygon", address };
+    return { hash, chain: chain as "bep20" | "polygon" | "ethereum", address };
   })
 
   .handler(async ({ data }): Promise<DepositCheck> => {
