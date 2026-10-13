@@ -24,6 +24,17 @@ import { allProducts, say, setState } from "./core";
 
 const EM_PAGE = 12;
 
+/**
+ * Hide "ghost" product rows — ones left with no title but a non-manual
+ * delivery, created when a product is deleted while a supplier sync patch is
+ * mid-flight. They would otherwise show as blank "Item" buttons here.
+ */
+function liveProducts(all: Record<string, any>): [string, any][] {
+  return Object.entries(all).filter(
+    ([, p]) => p && (String(p.title || "").trim() !== "" || String(p.delivery || "manual") === "manual"),
+  );
+}
+
 /** Show the saved custom emoji on setup buttons, not just in the shop. */
 function emojiButton(text: string, callback_data: string, id?: string) {
   return {
@@ -45,7 +56,7 @@ function emPager(prefix: string, page: number, total: number) {
 
 export async function emojiHome(chatId: number, note = "") {
   const all = await allProducts();
-  const p = productEmojiStats(Object.keys(all));
+  const p = productEmojiStats(liveProducts(all).map(([id]) => id));
   const s = slotStats();
   const on = premiumEnabled();
   await say(
@@ -135,7 +146,7 @@ export async function emojiList(chatId: number, page = 0) {
 
 export async function emojiProducts(chatId: number, page = 0) {
   const all = await allProducts();
-  const entries = Object.entries(all);
+  const entries = liveProducts(all);
   if (!entries.length)
     return say(chatId, "No products yet.", {
       inline_keyboard: [[{ text: "⬅️ Back to Emoji Setup", callback_data: "a:em" }]],

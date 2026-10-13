@@ -3,7 +3,6 @@ import {
   dbGet,
   dbPatch,
   dbPut,
-  siteUrl,
   tg,
   ownerIds,
   applyBotConfig,
@@ -438,7 +437,6 @@ export function mainKeyboard() {
         cbtn(DOT.blue, "btn.orders", "Orders", "orders"),
       ],
       [cbtn(DOT.violet, "btn.apikey", "Reseller API key", "apikey")],
-      [{ text: `${be("btn.website")} Visit Website`, url: siteUrl() }],
     ],
   };
 }

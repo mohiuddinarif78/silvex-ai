@@ -85,6 +85,17 @@ export async function importProvider(
   let updated = 0;
   let removed = 0;
 
+  // Ghost rows (a product deleted while a supplier sync patch was mid-flight:
+  // price/stock only, no title) are cleaned up here too, not just in
+  // syncAllProviders — otherwise they linger as blank "Item" buttons.
+  for (const [key, p] of Object.entries(existing || {})) {
+    if (p && String(p.title || "").trim() === "" && String(p.delivery || "manual") !== "manual") {
+      await dbPut(`products/${key}`, null);
+      delete (existing as any)[key];
+      removed++;
+    }
+  }
+
   // Drop anything from this provider that is no longer on the keep list.
   for (const [key, p] of Object.entries(existing || {})) {
     if (!p || p.delivery !== "supplier") continue;
