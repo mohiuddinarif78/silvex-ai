@@ -381,9 +381,8 @@ BEGIN
       COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email,'@',1), 'User'),
       'web', upper(substr(md5(NEW.id::text),1,8)));
   END IF;
-  IF lower(NEW.email) IN ('adithyanbraj@gmail.com') THEN
-    INSERT INTO public.user_roles (user_id, role) VALUES (NEW.id,'owner'),(NEW.id,'admin') ON CONFLICT DO NOTHING;
-  END IF;
+  -- Owner/admin roles are not granted here: the server grants them from the
+  -- OWNER_EMAILS env variable on login (src/lib/cloud-access.server.ts).
   RETURN NEW;
 END $$;
 CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users

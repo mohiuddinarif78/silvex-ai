@@ -8,17 +8,17 @@ Railway → Variables).
 ## 1. Database
 
 1. Create a Supabase project, enable Email auth.
-2. In the SQL editor run `drizzle/migrations/0000_store_core_schema.sql`, then
-   `0001_notifications_signed_in_only.sql`. Edit the owner email in
-   `handle_new_auth_user` first.
+2. In the SQL editor run the files in `drizzle/migrations/` in order
+   (`0000_…`, `0001_…`, `0002_…`).
 3. Set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
    and the three `VITE_SUPABASE_*` copies.
 
 ## 2. Owners
 
-- Website admin = an `owner`/`admin` row in `user_roles` **and** an email in
-  `OWNER_EMAILS` / `VITE_OWNER_EMAILS`. There is no "first account becomes
-  owner" rule.
+- Website admin = a verified login whose email is in `OWNER_EMAILS` and
+  `VITE_OWNER_EMAILS`. Nothing to edit in the database: the server creates or
+  removes the `user_roles` rows on login. Keep "Confirm email" on in Supabase
+  Auth. After changing `VITE_OWNER_EMAILS`, redeploy (it is baked into the build).
 - Bot admins = Settings → Telegram owner IDs, or `TELEGRAM_OWNER_IDS`. There is
   no "first person who opens the bot becomes owner" rule.
 
