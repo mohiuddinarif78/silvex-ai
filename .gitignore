@@ -16,6 +16,9 @@ dist-ssr
 .nitro
 *.local
 
+# This is a Bun project — do not commit the npm lockfile (use bun.lock)
+package-lock.json
+
 # Environment files (contain secrets — never commit)
 .env
 .env.*
