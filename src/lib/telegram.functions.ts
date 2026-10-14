@@ -42,25 +42,56 @@ export const notifyTelegramOrder = createServerFn({ method: "POST" })
     try {
       const { dbGet, money, notifyOwners, tg, siteUrl, loadBotRuntime } = await import("./telegram.server");
       await loadBotRuntime();
-      const lines = data.items.map((i) => `• ${i.title}\n   🔢 Quantity: ${i.qty}`).join("\n");
+
+      // The notification must describe a REAL order. Load it from the database
+      // and send using the stored values — never the caller's numbers. This
+      // stops empty/$0 "ghost" orders and amount spoofing: a logged-in user (or
+      // a frontend misfire) can no longer post a fabricated order notice.
+      const orderId = String(data.orderId || "").trim();
+      if (!orderId) return { ok: false as const, error: "missing order id" };
+      const order = await dbGet<any>(`orders/${orderId}`);
+      if (!order) return { ok: false as const, error: "unknown order" };
+
+      // Customers may only notify about their own order; staff may notify any.
+      if (!who.staff && String(order.uid || "") !== who.uid) {
+        return { ok: false as const, error: "not your order" };
+      }
+
+      // Authoritative values from the stored order.
+      const buyerUid = String(order.uid || data.uid || "");
+      const email = String(order.email || "");
+      const total = Number(order.total || 0);
+      const status = String(order.status || "Pending");
+      const items = Array.isArray(order.items)
+        ? order.items.slice(0, 30).map((i: any) => ({ title: String(i.title || ""), qty: Number(i.qty || 1) }))
+        : [];
+      const lines = items.map((i: { title: string; qty: number }) => `• ${i.title}\n   🔢 Quantity: ${i.qty}`).join("\n");
+
       await notifyOwners(
-        `🛒 <b>New website order</b>\n${lines}\nBuyer: ${data.email || "-"}\nTotal: ${money(data.total)}\nOrder: ${data.orderId}\nStatus: ${data.status}`,
+        `🛒 <b>New website order</b>\n${lines}\nBuyer: ${email || "-"}\nTotal: ${money(total)}\nOrder: ${orderId}\nStatus: ${status}`,
       );
-      if (data.uid) {
+      if (buyerUid) {
         const { pushUser } = await import("./push.server");
-        void pushUser(data.uid, {
-          title: `🧾 Order ${data.status}`,
-          body: `${data.items.map((i) => `${i.title} x${i.qty}`).join(", ")} — ${money(data.total)}`,
+        void pushUser(buyerUid, {
+          title: `🧾 Order ${status}`,
+          body: `${items.map((i: { title: string; qty: number }) => `${i.title} x${i.qty}`).join(", ")} — ${money(total)}`,
           url: "/orders",
         });
-        const chatId = await dbGet<number>(`users/${data.uid}/telegramChatId`);
+        const chatId = await dbGet<number>(`users/${buyerUid}/telegramChatId`);
         if (chatId) {
-          const delivered = data.delivered?.length
-            ? `\n\n${data.delivered.map((d) => `${d.title}\n<code>${d.content}</code>`).join("\n\n")}`
+          // Delivered content comes from the stored order (admin delivery writes
+          // it there); fall back to the caller's only when staff supplied it.
+          const deliveredList = Array.isArray(order.delivered) && order.delivered.length
+            ? order.delivered
+            : who.staff && Array.isArray(data.delivered)
+              ? data.delivered
+              : [];
+          const delivered = deliveredList.length
+            ? `\n\n${deliveredList.map((d: any) => `${String(d.title || "")}\n<code>${String(d.content || "")}</code>`).join("\n\n")}`
             : "";
           await tg("sendMessage", {
             chat_id: chatId,
-            text: `🧾 <b>Order ${data.orderId}</b>\n${lines}\nTotal: ${money(data.total)}\nStatus: ${data.status}${delivered}\n\n🌐 Website: ${siteUrl()}`,
+            text: `🧾 <b>Order ${orderId}</b>\n${lines}\nTotal: ${money(total)}\nStatus: ${status}${delivered}\n\n🌐 Website: ${siteUrl()}`,
             parse_mode: "HTML",
             reply_markup: { inline_keyboard: [[{ text: "🌐 Visit website", url: siteUrl() }]] },
           }).catch(() => undefined);
