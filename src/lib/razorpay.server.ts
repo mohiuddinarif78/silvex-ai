@@ -38,6 +38,95 @@ function authHeader(conf: RazorpayConf): string {
   return `Basic ${btoa(raw)}`;
 }
 
+/**
+ * The single source of truth about one payment. Never trust the webhook body
+ * or any client input for the amount — this re-fetches the payment straight
+ * from Razorpay with the secret key and reports only what Razorpay confirms.
+ */
+export type VerifiedPayment = {
+  ok: boolean;
+  /** Why it was rejected (for logs); empty when ok. */
+  reason: string;
+  paymentId: string;
+  /** Rupees Razorpay actually captured (major units). 0 unless ok. */
+  inrCaptured: number;
+  currency: string;
+  live: boolean;
+  status: string;
+  orderId: string;
+  linkId: string;
+  notes: Record<string, string>;
+};
+
+/**
+ * Fetch one payment from Razorpay by id and decide whether it may credit a
+ * wallet. A payment qualifies ONLY when Razorpay itself reports it captured,
+ * in live mode, in INR, with a positive captured amount. Anything else — test
+ * money, authorized-but-not-captured, failed, refunded, wrong currency — is
+ * rejected regardless of what the webhook body claimed.
+ */
+export async function verifyRazorpayPayment(paymentId: string): Promise<VerifiedPayment> {
+  const empty: VerifiedPayment = {
+    ok: false,
+    reason: "",
+    paymentId: String(paymentId || ""),
+    inrCaptured: 0,
+    currency: "",
+    live: false,
+    status: "",
+    orderId: "",
+    linkId: "",
+    notes: {},
+  };
+  const id = String(paymentId || "").trim();
+  if (!id) return { ...empty, reason: "missing payment id" };
+
+  const conf = await razorpayConfig();
+  if (!conf.keyId || !conf.keySecret) return { ...empty, reason: "payment keys not configured" };
+
+  let res: Response;
+  try {
+    res = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(id)}`, {
+      headers: { authorization: authHeader(conf) },
+    });
+  } catch {
+    return { ...empty, reason: "could not reach Razorpay" };
+  }
+  const p = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) {
+    return { ...empty, reason: `Razorpay fetch failed (${res.status})` };
+  }
+
+  const status = String(p?.status || "");
+  const currency = String(p?.currency || "");
+  // Razorpay marks sandbox entities with `live: false`. Treat a missing flag as
+  // not-live so a malformed/foreign response can never slip through.
+  const live = p?.live === true;
+  const captured = p?.captured === true || status === "captured";
+  const amount = Number(p?.amount_captured ?? (captured ? p?.amount : 0)) || 0;
+  const inrCaptured = Math.round(amount) / 100;
+  const notes = (p?.notes && typeof p.notes === "object" ? p.notes : {}) as Record<string, string>;
+
+  const base: VerifiedPayment = {
+    ...empty,
+    paymentId: String(p?.id || id),
+    inrCaptured,
+    currency,
+    live,
+    status,
+    orderId: String(p?.order_id || ""),
+    linkId: String(p?.payment_link_id || ""),
+    notes,
+  };
+
+  if (!live) return { ...base, reason: "payment is not live (test mode)" };
+  if (status !== "captured" || !captured) return { ...base, reason: `payment not captured (status=${status || "unknown"})` };
+  if (currency !== "INR") return { ...base, reason: `unexpected currency ${currency || "unknown"}` };
+  if (!(inrCaptured > 0)) return { ...base, reason: "no amount captured" };
+
+  return { ...base, ok: true };
+}
+
 export type LinkResult =
   | { ok: true; url: string; id: string; inr: number; baseInr: number; feeInr: number; feePercent: number }
   | { ok: false; error: string };
@@ -203,14 +292,16 @@ export async function verifyWebhook(rawBody: string, signature: string): Promise
 }
 
 /**
- * Adds a paid amount to a wallet exactly once and tells the buyer.
+ * Adds a verified, captured payment to a wallet exactly once and tells the
+ * buyer. The USD credited is computed HERE from the rupees Razorpay actually
+ * captured and the server-side rate — the caller cannot dictate the amount.
  * Every id Razorpay gives us for the same payment (payment id and payment
  * link id) is remembered, so the same rupee can never be counted twice even
  * when Razorpay sends several notifications for one payment.
  */
 export async function creditDeposit(opts: {
   uid: string;
-  usd: number;
+  /** Rupees Razorpay actually captured. The ONLY input that sets the amount. */
   inr: number;
   paymentId: string;
   linkId?: string;
@@ -219,22 +310,54 @@ export async function creditDeposit(opts: {
   productId?: string;
   qty?: number;
   chatId?: number;
-}): Promise<{ credited: boolean; balance: number }> {
+}): Promise<{ credited: boolean; balance: number; reason?: string }> {
   const { dbCreateIfAbsent, dbGet, dbPut, dbPatch, dbPush, notifyOwners, money, tg } = await import("./telegram.server");
+  const conf = await razorpayConfig();
   const current = Number((await dbGet<number>(`users/${opts.uid}/wallet`)) || 0);
-  if (!opts.uid || !opts.paymentId || !(opts.usd > 0)) return { credited: false, balance: current };
+  const inrCaptured = Math.round(Number(opts.inr) * 100) / 100;
+  if (!opts.uid || !opts.paymentId || !(inrCaptured > 0)) {
+    return { credited: false, balance: current, reason: "missing uid/payment or no captured amount" };
+  }
+
+  // The dollar amount is always derived server-side from the rupees received
+  // and the server's own rate. notes.usd is never used to set the credit.
+  const rate = Number(conf.inrPerDollar) > 0 ? Number(conf.inrPerDollar) : 100;
+  const usd = Math.round((inrCaptured / rate) * 100) / 100;
+  if (!(usd > 0)) return { credited: false, balance: current, reason: "computed usd is zero" };
+
+  // Reconcile against what the deposit link was created to charge. A captured
+  // amount far below the expected amount (the ₹60-for-$1000 attack) is rejected
+  // and flagged, never credited.
+  const safeLink = String(opts.linkId || "").replace(/[.#$/[\]]/g, "_");
+  if (safeLink) {
+    const link = await dbGet<any>(`razorpayLinks/${safeLink}`).catch(() => null);
+    const expectedInr = Number(link?.inr) || 0;
+    if (expectedInr > 0) {
+      // Allow a 1% (or ₹1) tolerance for Razorpay fee rounding only.
+      const tolerance = Math.max(1, expectedInr * 0.01);
+      if (inrCaptured + tolerance < expectedInr) {
+        await notifyOwners(
+          `🚨 Razorpay underpayment blocked\nUser: ${opts.uid}\nExpected ₹${expectedInr.toFixed(0)} but captured ₹${inrCaptured.toFixed(0)}\nPayment: ${opts.paymentId}`,
+        ).catch(() => undefined);
+        return { credited: false, balance: current, reason: `captured ₹${inrCaptured} below expected ₹${expectedInr}` };
+      }
+    }
+    if (link?.uid && String(link.uid) !== String(opts.uid)) {
+      return { credited: false, balance: current, reason: "link belongs to a different user" };
+    }
+  }
 
   const keys = [...new Set([opts.paymentId, opts.linkId || ""].filter(Boolean))];
   const seen = await Promise.all(
     keys.map((k) => dbGet<any>(`razorpayPayments/${k}`).catch(() => null)),
   );
-  if (seen.some(Boolean)) return { credited: false, balance: current };
+  if (seen.some(Boolean)) return { credited: false, balance: current, reason: "already credited" };
 
   const date = new Date().toISOString();
   const record = {
     uid: opts.uid,
-    usd: opts.usd,
-    inr: opts.inr,
+    usd,
+    inr: inrCaptured,
     status: "Credited",
     email: opts.email || "",
     paymentId: opts.paymentId,
@@ -255,19 +378,18 @@ export async function creditDeposit(opts: {
   // Keep the old lookup records for compatibility and payment-id auditing.
   await Promise.all(keys.map((k) => dbPut(`razorpayPayments/${k}`, record)));
   const { walletAdd } = await import("./wallet.server");
-  const balance = Number((await walletAdd(opts.uid, opts.usd)) ?? current);
+  const balance = Number((await walletAdd(opts.uid, usd)) ?? current);
 
   // Turn the earlier "Pending" line into a paid one, or add a fresh paid line.
   const entry = {
     type: "Deposit",
     status: "Paid",
-    amount: opts.usd,
-    desc: `Card/UPI payment (₹${opts.inr.toFixed(0)})`,
+    amount: usd,
+    desc: `Card/UPI payment (₹${inrCaptured.toFixed(0)})`,
     paymentId: opts.paymentId,
     linkId: opts.linkId || "",
     date,
   };
-  const safeLink = String(opts.linkId || "").replace(/[.#$/[\]]/g, "_");
   if (safeLink) await dbPut(`users/${opts.uid}/history/rzp_${safeLink}`, entry);
   else await dbPush(`users/${opts.uid}/history`, entry);
   if (safeLink) await dbPatch(`razorpayLinks/${safeLink}`, { status: "Paid", paidAt: date });
@@ -278,14 +400,14 @@ export async function creditDeposit(opts: {
     await tg("sendMessage", {
       chat_id: tgId,
       parse_mode: "HTML",
-      text: `✅ <b>Deposit done</b>\n${money(opts.usd)} added by card/UPI (₹${opts.inr.toFixed(0)}).\nNew balance: <b>${money(balance)}</b>`,
+      text: `✅ <b>Deposit done</b>\n${money(usd)} added by card/UPI (₹${inrCaptured.toFixed(0)}).\nNew balance: <b>${money(balance)}</b>`,
     }).catch(() => undefined);
   }
   void import("./push.server").then(({ pushUser }) =>
-    pushUser(opts.uid, { title: "✅ Deposit done", body: `${money(opts.usd)} added. New balance ${money(balance)}`, url: "/history" }),
+    pushUser(opts.uid, { title: "✅ Deposit done", body: `${money(usd)} added. New balance ${money(balance)}`, url: "/history" }),
   ).catch(() => undefined);
   await notifyOwners(
-    `💳 Deposit credited\nUser: ${opts.uid}\nAmount: ${money(opts.usd)} (₹${opts.inr.toFixed(0)})\nPayment: ${opts.paymentId}`,
+    `💳 Deposit credited\nUser: ${opts.uid}\nAmount: ${money(usd)} (₹${inrCaptured.toFixed(0)})\nPayment: ${opts.paymentId}`,
   ).catch(() => undefined);
 
   // The payment was made for one product: hand it over straight away.
@@ -297,7 +419,7 @@ export async function creditDeposit(opts: {
       if (safeLink) await dbPatch(`razorpayLinks/${safeLink}`, { status: "Delivered" });
       if (safeLink)
         await dbPatch(`users/${opts.uid}/history/rzp_${safeLink}`, {
-          desc: `Card/UPI payment (₹${opts.inr.toFixed(0)}) — order delivered`,
+          desc: `Card/UPI payment (₹${inrCaptured.toFixed(0)}) — order delivered`,
         });
     } catch {
       await notifyOwners(
@@ -329,31 +451,32 @@ export async function settlePaymentLink(
   const json = (await res.json().catch(() => ({}))) as any;
   if (!res.ok) return { status: "error", message: String(json?.error?.description || `Provider error (${res.status})`) };
 
-  // Only a link Razorpay itself marks as paid, with money really received.
-  const amountPaid = Number(json?.amount_paid || 0);
-  const paid = String(json?.status || "") === "paid" && amountPaid > 0;
-  if (!paid) return { status: "pending", message: "We have not received this payment yet." };
-
-  const notes = (json?.notes || {}) as Record<string, string>;
-  const inr = amountPaid / 100;
-  const usd =
-    Number(notes["usd"]) > 0 ? Number(notes["usd"]) : Math.round((inr / conf.inrPerDollar) * 100) / 100;
-  const uid = String(notes["uid"] || "");
+  // Find the underlying payment id Razorpay recorded against this link, then
+  // verify THAT payment directly (captured + live + INR). The payment-link
+  // object's own amount_paid is never trusted to set the credit.
   const link = String(json?.id || linkId);
-  const captured = (Array.isArray(json?.payments) ? json.payments : []).find(
-    (p: any) => String(p?.status || "") === "captured" || Number(p?.amount || 0) > 0,
-  );
-  const paymentId = String(captured?.payment_id || captured?.id || link);
+  const notes = (json?.notes || {}) as Record<string, string>;
+  const payments = Array.isArray(json?.payments) ? json.payments : [];
+  const paidRow = payments.find((p: any) => String(p?.status || "") === "captured") || payments[0];
+  const paymentId = String(paidRow?.payment_id || paidRow?.id || "");
+  if (!paymentId) return { status: "pending", message: "We have not received this payment yet." };
+
+  const verified = await verifyRazorpayPayment(paymentId);
+  if (!verified.ok) {
+    // Not a genuine captured live INR payment — do not credit anything.
+    return { status: "pending", message: "We have not received a confirmed payment yet." };
+  }
+
+  const uid = String(verified.notes["uid"] || notes["uid"] || "");
   const out = await creditDeposit({
     uid,
-    usd,
-    inr,
-    paymentId,
+    inr: verified.inrCaptured,
+    paymentId: verified.paymentId,
     linkId: link,
-    email: notes["email"] || "",
-    productId: String(notes["pid"] || ""),
-    qty: Number(notes["qty"] || 1),
-    chatId: Number(notes["chat"] || 0),
+    email: verified.notes["email"] || notes["email"] || "",
+    productId: String(verified.notes["pid"] || notes["pid"] || ""),
+    qty: Number(verified.notes["qty"] || notes["qty"] || 1),
+    chatId: Number(verified.notes["chat"] || notes["chat"] || 0),
   });
   return out.credited
     ? { status: "paid", message: "Payment received.", balance: out.balance }

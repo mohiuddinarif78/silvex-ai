@@ -31,39 +31,37 @@ export const Route = createFileRoute("/api/public/razorpay/webhook")({
 
         const payment = body?.payload?.payment?.entity ?? {};
         const link = body?.payload?.payment_link?.entity ?? {};
-        const notes = { ...(link.notes || {}), ...(payment.notes || {}) } as Record<string, string>;
-        const uid = String(notes["uid"] || "").trim();
 
-        // Only real, captured money counts. Without a payment id we cannot tell
-        // one payment from another, so we never credit on a link id alone.
+        // The webhook body is only a trigger. We take the payment id from it and
+        // then VERIFY that payment directly against Razorpay with the secret
+        // key — the posted amount/status/notes are never trusted to credit.
         const paymentId = String(payment.id || "");
-        const status = String(payment.status || "");
-        const inrPaid = Number(payment.amount ?? 0) / 100;
-        if (!paymentId || (status && status !== "captured") || !(inrPaid > 0)) {
+        if (!paymentId) return new Response("ignored");
+
+        const { verifyRazorpayPayment, creditDeposit } = await import("@/lib/razorpay.server");
+        const verified = await verifyRazorpayPayment(paymentId);
+        if (!verified.ok) {
+          // Fake/test/uncaptured/wrong-currency payment: credit nothing.
           return new Response("ignored");
         }
 
-        const { razorpayConfig, creditDeposit } = await import("@/lib/razorpay.server");
-        const conf = await razorpayConfig();
-        const usd =
-          Number(notes["usd"]) > 0
-            ? Number(notes["usd"])
-            : Math.round((inrPaid / conf.inrPerDollar) * 100) / 100;
+        const uid = String(verified.notes["uid"] || "").trim();
+        if (!uid) return new Response("ignored");
 
-        if (!uid || !(usd > 0)) return new Response("ignored");
-
+        // Credit strictly from the rupees Razorpay confirms were captured.
+        // creditDeposit re-derives USD server-side and reconciles against the
+        // originating link, so amount/rate manipulation is impossible here.
         await creditDeposit({
           uid,
-          usd,
-          inr: inrPaid,
-          paymentId,
-          // payment.captured events may omit payload.payment_link but retain
-          // the originating link on the payment itself.
-          linkId: String(link.id || payment.payment_link_id || ""),
-          email: notes["email"] || "",
-          productId: String(notes["pid"] || ""),
-          qty: Number(notes["qty"] || 1),
-          chatId: Number(notes["chat"] || 0),
+          inr: verified.inrCaptured,
+          paymentId: verified.paymentId,
+          // payment.captured events may omit payload.payment_link but the
+          // payment itself carries the originating link id.
+          linkId: verified.linkId || String(link.id || payment.payment_link_id || ""),
+          email: verified.notes["email"] || "",
+          productId: String(verified.notes["pid"] || ""),
+          qty: Number(verified.notes["qty"] || 1),
+          chatId: Number(verified.notes["chat"] || 0),
         });
 
         return new Response("ok");
