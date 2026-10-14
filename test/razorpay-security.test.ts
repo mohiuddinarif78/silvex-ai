@@ -380,3 +380,121 @@ describe("verifyWebhook — signature authenticity & tampering", () => {
     expect(await verifyWebhook("{}", "")).toBe(false);
   });
 });
+
+/* ===================== additional attack scenarios ====================== */
+
+describe("verifyRazorpayPayment — more manipulation attempts", () => {
+  it("rejects a refunded payment", async () => {
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment({ status: "refunded" });
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not captured/i);
+  });
+
+  it("rejects a lowercase/padded currency that is not exactly INR", async () => {
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment({ currency: " inr " });
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/currency/i);
+  });
+
+  it("credits the actually-captured amount on a partial capture, not the authorized amount", async () => {
+    // Authorized ₹1000 but only ₹100 captured — only the captured counts.
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment({ amount: 100000, amount_captured: 10000 });
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(true);
+    expect(v.inrCaptured).toBe(100); // ₹100, not ₹1000
+  });
+
+  it("ignores notes.usd entirely — the API amount is the only truth", async () => {
+    // Attacker stuffs a huge notes.usd; verifier reports the real captured INR.
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment({ amount: 500, amount_captured: 500, notes: { uid: "tg_x", usd: "999999" } });
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(true);
+    expect(v.inrCaptured).toBe(5); // ₹5, regardless of notes.usd=999999
+  });
+
+  it("rejects a negative captured amount", async () => {
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment({ amount: -100000, amount_captured: -100000 });
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(false);
+  });
+
+  it("rejects a non-numeric captured amount", async () => {
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment({ amount: "lots", amount_captured: "lots" });
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(false);
+  });
+
+  it("rejects when Razorpay returns a 5xx (fail closed, no credit)", async () => {
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    fetchStatus = 500;
+    paymentResponse = {};
+    const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(false);
+  });
+});
+
+describe("creditDeposit — more abuse attempts", () => {
+  it("credits only the server-computed USD when notes.usd is inflated and there is no link", async () => {
+    // No stored link to reconcile against; the amount still comes from inr.
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    const out = await creditDeposit({ uid: "tg_n", inr: 500, paymentId: "pay_n", linkId: "" });
+    expect(out.credited).toBe(true);
+    expect(store.data.get("users/tg_n/wallet")).toBe(5); // ₹500/100 = $5, not any notes value
+  });
+
+  it("does not let a second user claim another user's already-credited payment id", async () => {
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    const a = await creditDeposit({ uid: "tg_victim", inr: 1000, paymentId: "pay_SHARED", linkId: "" });
+    const b = await creditDeposit({ uid: "tg_thief", inr: 1000, paymentId: "pay_SHARED", linkId: "" });
+    expect(a.credited).toBe(true);
+    expect(b.credited).toBe(false); // same payment id already claimed
+    expect(store.data.get("users/tg_victim/wallet")).toBe(10);
+    expect(store.data.get("users/tg_thief/wallet")).toBeUndefined();
+  });
+
+  it("rejects a negative inr passed to the credit path", async () => {
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    const out = await creditDeposit({ uid: "tg_neg", inr: -1000, paymentId: "pay_neg", linkId: "" });
+    expect(out.credited).toBe(false);
+    expect(store.data.get("users/tg_neg/wallet")).toBeUndefined();
+  });
+
+  it("rejects an empty uid", async () => {
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    const out = await creditDeposit({ uid: "", inr: 1000, paymentId: "pay_nouid", linkId: "" });
+    expect(out.credited).toBe(false);
+  });
+
+  it("rejects an empty payment id (no stable claim key)", async () => {
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    const out = await creditDeposit({ uid: "tg_e", inr: 1000, paymentId: "", linkId: "plink_e" });
+    expect(out.credited).toBe(false);
+  });
+
+  it("credits the full captured amount on overpayment (paid more than the link asked)", async () => {
+    // Customer paid ₹1200 against a ₹1000 link — above expected is fine; they
+    // get credit for what actually arrived.
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    store.data.set("razorpayLinks/plink_over", { uid: "tg_o", usd: 10, inr: 1000 });
+    const out = await creditDeposit({ uid: "tg_o", inr: 1200, paymentId: "pay_over", linkId: "plink_over" });
+    expect(out.credited).toBe(true);
+    expect(store.data.get("users/tg_o/wallet")).toBe(12); // ₹1200/100
+  });
+
+  it("blocks a 1-rupee-for-$1000 payment (extreme underpayment)", async () => {
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    store.data.set("razorpayLinks/plink_x", { uid: "tg_x2", usd: 1000, inr: 100000 });
+    const out = await creditDeposit({ uid: "tg_x2", inr: 1, paymentId: "pay_x2", linkId: "plink_x" });
+    expect(out.credited).toBe(false);
+    expect(out.reason).toMatch(/below expected/i);
+    expect(store.data.get("users/tg_x2/wallet")).toBeUndefined();
+  });
+});
