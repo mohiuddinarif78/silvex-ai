@@ -61,9 +61,17 @@ export type VerifiedPayment = {
 /**
  * Fetch one payment from Razorpay by id and decide whether it may credit a
  * wallet. A payment qualifies ONLY when Razorpay itself reports it captured,
- * in live mode, in INR, with a positive captured amount. Anything else — test
- * money, authorized-but-not-captured, failed, refunded, wrong currency — is
- * rejected regardless of what the webhook body claimed.
+ * in INR, with a positive captured amount, AND the server is configured with
+ * LIVE keys (so test-mode money can never be seen). Authorized-but-not-captured,
+ * failed, refunded, or wrong-currency payments are rejected regardless of what
+ * the webhook body claimed.
+ *
+ * Note: we gate on the *key* being live (rzp_live_…), not the payment entity's
+ * `live` flag. Razorpay stamps `live: false` on genuine payments for accounts
+ * that are activated but not fully live-flagged, and those are still real money.
+ * Test payments are only visible with rzp_test_ keys, so a live key is the
+ * authoritative test/live boundary; the amount reconciliation in creditDeposit
+ * is the primary fraud defence.
  */
 export async function verifyRazorpayPayment(paymentId: string): Promise<VerifiedPayment> {
   const empty: VerifiedPayment = {
@@ -119,7 +127,12 @@ export async function verifyRazorpayPayment(paymentId: string): Promise<Verified
     notes,
   };
 
-  if (!live) return { ...base, reason: "payment is not live (test mode)" };
+  // The real test/live boundary is the key: a live key cannot even fetch a
+  // test payment. We record the entity `live` flag for auditing but do not
+  // reject on it (genuine payments can carry live:false on provisional
+  // accounts).
+  const liveKey = conf.keyId.startsWith("rzp_live_");
+  if (!liveKey) return { ...base, reason: "server is not using live Razorpay keys" };
   if (status !== "captured" || !captured) return { ...base, reason: `payment not captured (status=${status || "unknown"})` };
   if (currency !== "INR") return { ...base, reason: `unexpected currency ${currency || "unknown"}` };
   if (!(inrCaptured > 0)) return { ...base, reason: "no amount captured" };

@@ -187,15 +187,26 @@ describe("verifyRazorpayPayment", () => {
     expect(v.ok).toBe(true);
     expect(v.inrCaptured).toBe(100000);
     expect(v.currency).toBe("INR");
-    expect(v.live).toBe(true);
   });
 
-  it("rejects test-mode payments (live=false) — the fake-payment attack", async () => {
+  it("accepts a genuine captured payment even when the entity live flag is false (live key)", async () => {
+    // Razorpay stamps live:false on real payments for provisional accounts.
+    // Since the server uses a live key, this is still real money and must credit.
     const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
     paymentResponse = livePayment({ live: false });
     const v = await verifyRazorpayPayment("pay_REAL123");
+    expect(v.ok).toBe(true);
+    expect(v.inrCaptured).toBe(100000);
+  });
+
+  it("rejects everything when the server is configured with a test key", async () => {
+    // A test key is the real test/live boundary — it can only see test money.
+    store.data.set("site_settings/config", { ...CONFIG, razorpayKeyId: "rzp_test_abc" });
+    const { verifyRazorpayPayment } = await import("@/lib/razorpay.server");
+    paymentResponse = livePayment();
+    const v = await verifyRazorpayPayment("pay_REAL123");
     expect(v.ok).toBe(false);
-    expect(v.reason).toMatch(/not live/i);
+    expect(v.reason).toMatch(/not using live/i);
   });
 
   it("rejects uncaptured / authorized payments", async () => {

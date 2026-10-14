@@ -68,7 +68,11 @@ signed webhook body is treated as untrusted data for amount/status/notes.
    (HTTP Basic auth). This is a server-to-server call Razorpay authenticates;
    the response cannot be forged by a client.
 3. Accepts the payment **only if all** of these hold:
-   - `live === true` — rejects test-mode payments (free play money).
+   - the server is configured with a **live key** (`rzp_live_…`) — a live key
+     cannot fetch test-mode payments, so this is the real test/live boundary.
+     (The payment entity's own `live` flag is recorded for auditing but not
+     used to reject: Razorpay stamps `live: false` on genuine payments for
+     provisional/not-fully-activated accounts, and that is still real money.)
    - `status === "captured"` and `captured === true` — rejects
      authorized-but-not-captured, failed, pending, refunded.
    - `currency === "INR"` — rejects unexpected currencies.
