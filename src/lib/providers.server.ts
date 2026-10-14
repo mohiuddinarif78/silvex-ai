@@ -313,7 +313,9 @@ export async function providerProducts(id: string): Promise<ApiProduct[]> {
   })();
   return (Array.isArray(list) ? list : []).map((p: any) => {
     const s = pickStock(p);
-    const raw = String(p.id ?? p.productId ?? p.product_id ?? "");
+    // Different shops name the product identifier differently. CupponHub uses
+    // `key` (e.g. "gemini_link"); others use id / product_id / sku / slug.
+    const raw = String(p.id ?? p.productId ?? p.product_id ?? p.key ?? p.sku ?? p.slug ?? "");
     let img = String(p.image_url ?? p.image ?? p.photo ?? "");
     if (img.startsWith("/")) img = origin + img;
     return {
