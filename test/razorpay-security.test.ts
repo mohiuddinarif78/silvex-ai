@@ -289,6 +289,18 @@ describe("creditDeposit — amount integrity & idempotency", () => {
     expect(walletAdd).toHaveBeenCalledTimes(1);
   });
 
+  it("credits only once when the same payment arrives with different/empty link ids (webhook vs settle)", async () => {
+    // UPI payments can lack payment_link_id, so the webhook and the "I have
+    // paid" settle path pass different linkId values for the same payment.
+    // The claim is keyed on the payment id, so it must still credit once.
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    const a = await creditDeposit({ uid: "tg_9", inr: 500, paymentId: "pay_DUP", linkId: "" });
+    const b = await creditDeposit({ uid: "tg_9", inr: 500, paymentId: "pay_DUP", linkId: "plink_DUP" });
+    expect(a.credited).toBe(true);
+    expect(b.credited).toBe(false);
+    expect(store.data.get("users/tg_9/wallet")).toBe(5);
+  });
+
   it("credits only once under concurrent delivery (webhook races manual check)", async () => {
     const { creditDeposit } = await import("@/lib/razorpay.server");
     // Warm the lazy dynamic imports once (sequentially) so the concurrent trio

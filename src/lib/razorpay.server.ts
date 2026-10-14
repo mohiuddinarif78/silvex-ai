@@ -378,14 +378,18 @@ export async function creditDeposit(opts: {
     date,
   };
 
-  // One payment link is one irreversible claim. A button tap and Razorpay's
-  // webhook can arrive together on separate servers; an ordinary read/write
-  // pair lets both continue. The ETag claim allows exactly one of them through.
-  const claimId = String(opts.linkId || opts.paymentId).replace(/[.#$/[\]]/g, "_");
+  // One PAYMENT is one irreversible claim. The claim must be keyed on a value
+  // that is identical across every path that can credit it. The payment id is
+  // the only such value: a UPI payment may arrive with no payment_link_id (so
+  // the link id differs or is empty between the webhook and the "I have paid"
+  // settle path), which previously let the same payment be claimed twice under
+  // two different keys — a double credit. The payment id is always present and
+  // unique, so claim on it.
+  const claimId = String(opts.paymentId).replace(/[.#$/[\]]/g, "_");
   const claimed = await dbCreateIfAbsent(`razorpayPaymentClaims/${claimId}`, record);
   if (!claimed) {
     const latest = Number((await dbGet<number>(`users/${opts.uid}/wallet`)) || 0);
-    return { credited: false, balance: latest };
+    return { credited: false, balance: latest, reason: "already credited" };
   }
 
   // Keep the old lookup records for compatibility and payment-id auditing.
