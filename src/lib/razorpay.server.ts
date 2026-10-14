@@ -458,7 +458,29 @@ export async function settlePaymentLink(
   const notes = (json?.notes || {}) as Record<string, string>;
   const payments = Array.isArray(json?.payments) ? json.payments : [];
   const paidRow = payments.find((p: any) => String(p?.status || "") === "captured") || payments[0];
-  const paymentId = String(paidRow?.payment_id || paidRow?.id || "");
+  let paymentId = String(paidRow?.payment_id || paidRow?.id || "");
+
+  // Fallback: UPI payments are not always listed under the payment link's
+  // `payments[]` right away (and the link's order id differs from the final
+  // pay_ id). When the link carries an order id, ask the order for its captured
+  // payment directly — this is the reliable id to verify and credit.
+  if (!paymentId) {
+    const orderId = String(json?.order_id || "");
+    if (orderId) {
+      try {
+        const ores = await fetch(
+          `https://api.razorpay.com/v1/orders/${encodeURIComponent(orderId)}/payments`,
+          { headers: { authorization: authHeader(conf) } },
+        );
+        const ojson = (await ores.json().catch(() => ({}))) as any;
+        const items = Array.isArray(ojson?.items) ? ojson.items : [];
+        const captured = items.find((p: any) => String(p?.status || "") === "captured") || items[0];
+        paymentId = String(captured?.id || "");
+      } catch {
+        /* fall through to "not received" below */
+      }
+    }
+  }
   if (!paymentId) return { status: "pending", message: "We have not received this payment yet." };
 
   const verified = await verifyRazorpayPayment(paymentId);
