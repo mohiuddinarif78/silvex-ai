@@ -50,19 +50,28 @@ export function ProductCard({ product }: { product: Product }) {
           </div>
         )}
 
-        {/* Badges overlay — single row so they wrap instead of overlapping on narrow cards */}
-        <div className="absolute inset-x-2 top-2 flex flex-wrap items-start justify-between gap-1">
+        {/* Badges overlay — single row, compact so they fit side by side on narrow cards */}
+        <div className="absolute inset-x-2 top-2 flex items-start justify-between gap-1">
           {stock.soldOut ? (
-            <Badge variant="muted">Sold out</Badge>
+            <Badge variant="muted" className="shrink-0 px-1.5 py-0 text-[10px] leading-4">
+              Sold out
+            </Badge>
           ) : stock.low ? (
-            <Badge variant="destructive">Low stock</Badge>
+            <Badge variant="destructive" className="shrink-0 px-1.5 py-0 text-[10px] leading-4">
+              Low stock
+            </Badge>
           ) : stock.unlimited || stock.count > 0 || product.delivery === "manual" ? (
-            <Badge variant="success">In stock</Badge>
+            <Badge variant="success" className="shrink-0 px-1.5 py-0 text-[10px] leading-4">
+              In stock
+            </Badge>
           ) : (
             <span />
           )}
-          <Badge variant="secondary" className="gap-0.5 bg-background/85 text-foreground backdrop-blur-sm">
-            {delivery.instant ? <Zap className="size-3" /> : <Clock className="size-3" />}
+          <Badge
+            variant="secondary"
+            className="shrink-0 gap-0.5 whitespace-nowrap bg-background/85 px-1.5 py-0 text-[10px] leading-4 text-foreground backdrop-blur-sm"
+          >
+            {delivery.instant ? <Zap className="size-2.5" /> : <Clock className="size-2.5" />}
             {delivery.label}
           </Badge>
         </div>
