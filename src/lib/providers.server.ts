@@ -250,12 +250,22 @@ function pickStock(p: any): { stock: number; unlimited: boolean } {
   return { stock: 0, unlimited: false };
 }
 
+// Some emoji carry a VS16 variation selector (U+FE0F) that several Telegram
+// clients render with bad vertical metrics, so the glyph "floats" onto the
+// previous line and its text wraps underneath (first seen with 🛡️). Dropping
+// the VS16 makes the emoji render inline with its text without changing which
+// emoji it is. We only strip it when the emoji begins a line (after start or a
+// newline, optionally preceded by spaces) — exactly where the misalignment is
+// visible — so inline emoji elsewhere are left untouched.
+const LINE_START_VS16 = /(^|\n)([ \t]*)(\p{Extended_Pictographic})\uFE0F/gu;
+
 export function cleanText(s: string): string {
   return String(s || "")
     .replace(/\{\{ce:\d+\|([^}]*)\}\}/g, "$1")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&")
+    .replace(LINE_START_VS16, "$1$2$3")
     .trim();
 }
 
