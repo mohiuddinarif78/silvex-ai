@@ -1,6 +1,6 @@
 /** Everything a shopper does in the bot: products, wallet, orders, buying. */
 import { defaultDepositAddress } from "@/lib/deposit.server";
-import { formatDescription } from "@/lib/format-desc";
+import { splitDescriptionSections } from "@/lib/format-desc";
 
 import { dbGet, dbPush, dbPut, money, notifyOwners, siteUrl, tg, tgSendPhoto, tgTag } from "@/lib/telegram.server";
 import { be, e as em, productEmoji, productEmojiChar } from "@/lib/emoji.server";
@@ -191,18 +191,27 @@ export async function sendProduct(chatId: number, id: string) {
       : `\n${em("norm.fast")} Instant delivery`;
   const sold = Number((p as any).salesCount || 0);
 
-  const escDesc = formatDescription(String(p.desc || ""))
-    .split("\n")
-    .map((line) => line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
-    .join("\n");
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // Render the description as "quoted sections": each heading (e.g.
+  // "What's Included:") stays as plain text and the lines under it sit in
+  // their own expandable blockquote. Descriptions with no headings fall back
+  // to a single quote so simple products look unchanged.
+  const sections = splitDescriptionSections(String(p.desc || "")).filter(
+    (s) => s.heading || s.body,
+  );
+  const descBlock = sections
+    .map((s) => {
+      const head = s.heading ? `<b>${esc(s.heading)}</b>\n` : "";
+      const quote = s.body ? `<blockquote expandable>${esc(s.body)}</blockquote>` : "";
+      return head + quote;
+    })
+    .join("\n\n");
   const text =
     `${productEmoji(id)} <b>${p.title || "Item"}</b>\n\n` +
     `${em("norm.money")} Price: <b>${money(p.price || 0)}</b>\n` +
     `${stockLine}\n${em("norm.fire")} Total sold: <b>${sold}</b>${availability}` +
-    // Description renders as an expandable quote. It must start on its own
-    // line after the header block — the quote tag sits directly after the
-    // separating newlines so the quote never swallows header text.
-    (escDesc ? `\n\n<blockquote expandable>${escDesc}</blockquote>` : "");
+    (descBlock ? `\n\n${descBlock}` : "");
 
   const keyboard = {
     inline_keyboard: [
