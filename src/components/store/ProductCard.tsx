@@ -50,17 +50,17 @@ export function ProductCard({ product }: { product: Product }) {
           </div>
         )}
 
-        {/* Badges overlay */}
-        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
+        {/* Badges overlay — single row so they wrap instead of overlapping on narrow cards */}
+        <div className="absolute inset-x-2 top-2 flex flex-wrap items-start justify-between gap-1">
           {stock.soldOut ? (
             <Badge variant="muted">Sold out</Badge>
           ) : stock.low ? (
             <Badge variant="destructive">Low stock</Badge>
           ) : stock.unlimited || stock.count > 0 || product.delivery === "manual" ? (
             <Badge variant="success">In stock</Badge>
-          ) : null}
-        </div>
-        <div className="absolute right-2 top-2">
+          ) : (
+            <span />
+          )}
           <Badge variant="secondary" className="gap-0.5 bg-background/85 text-foreground backdrop-blur-sm">
             {delivery.instant ? <Zap className="size-3" /> : <Clock className="size-3" />}
             {delivery.label}
