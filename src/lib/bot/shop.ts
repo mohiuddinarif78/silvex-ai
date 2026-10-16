@@ -102,6 +102,10 @@ async function catalog(query = ""): Promise<Entry[]> {
     if (matches(`${p.title || ""} ${(p as any).type || ""}`, query))
       out.push({ kind: "product", id, p });
   }
+  // Keep the natural order, but move out-of-stock products to the bottom of the
+  // list (Array.prototype.sort is stable, so in-stock and out-of-stock items
+  // each keep their relative order). Clients browse available items first.
+  out.sort((a, b) => Number(isOutOfStock(a.p)) - Number(isOutOfStock(b.p)));
   return out;
 }
 
