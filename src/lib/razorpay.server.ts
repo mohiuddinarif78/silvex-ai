@@ -407,8 +407,16 @@ export async function creditDeposit(opts: {
     linkId: opts.linkId || "",
     date,
   };
-  if (safeLink) await dbPut(`users/${opts.uid}/history/rzp_${safeLink}`, entry);
-  else await dbPush(`users/${opts.uid}/history`, entry);
+  // Write the paid line under a STABLE, idempotent key so it can never be
+  // duplicated. When a link id exists we reuse the "Pending" line's key
+  // (rzp_<link>); otherwise (UPI payments often carry no link id) we key on the
+  // payment id, which is always present and unique. The previous dbPush
+  // fallback used a random key, so the history-sync layer could not dedupe it
+  // and an overlapping re-sync inserted the same deposit twice (double credit).
+  const historyKey = safeLink
+    ? `rzp_${safeLink}`
+    : `rzp_${String(opts.paymentId).replace(/[.#$/[\]]/g, "_")}`;
+  await dbPut(`users/${opts.uid}/history/${historyKey}`, entry);
   if (safeLink) await dbPatch(`razorpayLinks/${safeLink}`, { status: "Paid", paidAt: date });
 
 

@@ -356,7 +356,7 @@ async function changeWallet(uid: string, delta: number, mustCover = 0): Promise<
   });
 }
 
-export async function buy(chatId: number, productId: string, qty = 1) {
+export async function buy(chatId: number, productId: string, qty = 1, idemToken?: string) {
   const uid = await ensureUser(chatId);
   const [p, storedUser] = await Promise.all([
     dbGet<Product>(`products/${productId}`),
@@ -383,6 +383,23 @@ export async function buy(chatId: number, productId: string, qty = 1) {
       `Only <b>${Number(p.supplierStock)}</b> in stock right now — please choose a smaller quantity.`,
       backHome,
     );
+  }
+
+  // One purchase intent = one order. When a token is supplied (the Telegram
+  // callback id of the "confirm" tap), claim it atomically BEFORE taking money
+  // so a redelivered or double-tapped confirm cannot create a second order and
+  // a second supplier delivery. Two genuine separate purchases carry different
+  // tokens and both proceed. No token (older call sites) keeps old behaviour.
+  if (idemToken) {
+    const { dbCreateIfAbsent } = await import("@/lib/telegram.server");
+    const key = `buyClaims/${String(idemToken).replace(/[.#$/[\]]/g, "_")}`;
+    const fresh = await dbCreateIfAbsent(key, {
+      uid,
+      productId,
+      qty: count,
+      at: new Date().toISOString(),
+    }).catch(() => true); // storage error: fail open rather than block a real buy
+    if (!fresh) return; // already handled this exact confirm — ignore the repeat
   }
 
   // Take the money first, atomically, so parallel taps can't overspend.

@@ -9,7 +9,7 @@ import { adminAskDelivery, adminCancelOrder, adminDecideRequest, adminHome, admi
 import { clearProductEmoji, emojiGroup, emojiHome, emojiList, emojiProducts, emojiSlotPick, emojiSlotReset, emojiToggle } from "@/lib/bot/emoji-ui";
 
 const seenUsers = new Set<number>();
-export async function handleCallback(chatId: number, data: string) {
+export async function handleCallback(chatId: number, data: string, callbackId?: string) {
   if (data === "noop") return;
   if (!seenUsers.has(chatId)) { seenUsers.add(chatId); void dbPut(`telegramUsers/${chatId}`, true).catch(() => undefined); }
   if (data === "joinskip") {
@@ -256,7 +256,7 @@ export async function handleCallback(chatId: number, data: string) {
   }
   if (data.startsWith("bgo:")) {
     const [, pid, n] = data.split(":");
-    return buy(chatId, String(pid), Number(n) || 1);
+    return buy(chatId, String(pid), Number(n) || 1, callbackId);
   }
   if (data.startsWith("pbc:")) {
     const [, pid, n] = data.split(":");

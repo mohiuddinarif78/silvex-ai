@@ -318,6 +318,29 @@ describe("creditDeposit — amount integrity & idempotency", () => {
     expect(store.data.get("users/tg_2/wallet")).toBe(5);
   });
 
+  it("credits only once and writes one history entry when the payment has no link id (UPI)", async () => {
+    // Regression: UPI payments often arrive with an empty link id. The old code
+    // fell back to dbPush with a random key, so an overlapping history re-sync
+    // inserted the same deposit twice (double credit). The deposit history must
+    // now use a stable, payment-id-derived key and never duplicate.
+    const { creditDeposit } = await import("@/lib/razorpay.server");
+    // warm dynamic imports
+    await creditDeposit({ uid: "tg_warm2", inr: 100, paymentId: "pay_warm2" });
+
+    const results = await Promise.all([
+      creditDeposit({ uid: "tg_upi", inr: 300, paymentId: "pay_upi" }),
+      creditDeposit({ uid: "tg_upi", inr: 300, paymentId: "pay_upi" }),
+      creditDeposit({ uid: "tg_upi", inr: 300, paymentId: "pay_upi" }),
+    ]);
+    expect(results.filter((r) => r.credited)).toHaveLength(1);
+    // wallet reflects a single $3 credit, not $6/$9
+    expect(store.data.get("users/tg_upi/wallet")).toBe(3);
+    // exactly one deposit history entry, under a stable payment-id key
+    const historyKeys = [...store.data.keys()].filter((k) => k.startsWith("users/tg_upi/history/"));
+    expect(historyKeys).toHaveLength(1);
+    expect(historyKeys[0]).toContain("pay_upi");
+  });
+
   it("refuses to credit a payment with no captured amount", async () => {
     const { creditDeposit } = await import("@/lib/razorpay.server");
     const out = await creditDeposit({ uid: "tg_1", inr: 0, paymentId: "pay_1", linkId: "plink_1" });

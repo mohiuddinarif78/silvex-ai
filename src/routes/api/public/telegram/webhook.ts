@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { loadBotRuntime, rememberUsername, telegramWebhookOk, tg } from "@/lib/telegram.server";
+import { dbCreateIfAbsent, loadBotRuntime, rememberUsername, telegramWebhookOk, tg } from "@/lib/telegram.server";
 import { editTarget, loadBotPresentation, rememberName } from "@/lib/bot/core";
 import { handleCallback } from "@/lib/bot/route-callback";
 import { handleText } from "@/lib/bot/route-text";
@@ -53,7 +53,7 @@ async function processUpdate(update: any) {
       rememberUsername(Number(chatId), cq.from?.username);
       if (messageId) editTarget.set(Number(chatId), Number(messageId));
       try {
-        await handleCallback(Number(chatId), String(cq.data || ""));
+        await handleCallback(Number(chatId), String(cq.data || ""), String(cq.id || ""));
       } finally {
         editTarget.delete(Number(chatId));
       }
@@ -98,6 +98,19 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           loadBotRuntime().catch(() => undefined),
         ]);
         if (!telegramWebhookOk(actual)) return new Response("Unauthorized", { status: 401 });
+
+        // Telegram retries a webhook delivery when our reply is slow, and users
+        // double-tap buttons; both can deliver the SAME update twice. Claim each
+        // update_id atomically and ignore any redelivery, so no action (buy,
+        // deposit, …) is ever processed more than once. Always answer ok:true so
+        // Telegram stops retrying.
+        const updateId = update?.update_id;
+        if (typeof updateId === "number") {
+          const fresh = await dbCreateIfAbsent(`tgUpdates/${updateId}`, {
+            at: new Date().toISOString(),
+          }).catch(() => true); // on storage error, fail open (process it)
+          if (!fresh) return Response.json({ ok: true });
+        }
 
         // Answer Telegram immediately so it sends the next update without waiting.
         // Work continues in the background, queued per chat to keep order.
