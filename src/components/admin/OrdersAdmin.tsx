@@ -32,6 +32,16 @@ function statusVariant(status: string): "success" | "destructive" | "secondary" 
   return "secondary";
 }
 
+/** Order date + time, shown in the buyer's local timezone. */
+function formatOrderDate(date: string): { date: string; time: string } {
+  const d = date ? new Date(date) : null;
+  if (!d || Number.isNaN(d.getTime())) return { date: "—", time: "" };
+  return {
+    date: d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }),
+    time: d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+  };
+}
+
 export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
   const { db, products, config, notify, showSuccess } = useStore();
   const [deliverFor, setDeliverFor] = useState<OrderRow | null>(null);
@@ -65,7 +75,11 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
 
   function deliveryOf(item: { id?: string; title: string }) {
     const product = products.find((entry) => entry.id === item.id || entry.title === item.title);
-    return product?.delivery === "auto" ? "Auto stock" : product?.delivery === "repeat" ? "Repeated" : "Manual";
+    return product?.delivery === "auto"
+      ? "Auto stock"
+      : product?.delivery === "repeat"
+        ? "Repeated"
+        : "Manual";
   }
 
   async function downloadFullStatement() {
@@ -73,7 +87,11 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
     const [u, o] = await Promise.all([get(ref(db, "users")), get(ref(db, "orders"))]);
     const users = Object.entries(u.val() || {}).map(([uid, v]) => ({ uid, ...(v as object) }));
     downloadCsv(
-      buildStatementCsv(users, Object.values(o.val() || {}), `${config.siteName || "Store"} — full statement`),
+      buildStatementCsv(
+        users,
+        Object.values(o.val() || {}),
+        `${config.siteName || "Store"} — full statement`,
+      ),
       `full-statement-${new Date().toISOString().slice(0, 10)}.csv`,
     );
   }
@@ -90,7 +108,8 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
     const delivered = items
       .map((item, index) => ({ title: item.title, content: (deliverLines[index] || "").trim() }))
       .filter((item) => item.content);
-    if (!delivered.length && !deliverNote.trim()) return notify("Add the delivery details the buyer should see");
+    if (!delivered.length && !deliverNote.trim())
+      return notify("Add the delivery details the buyer should see");
     setDelivering(true);
     try {
       await update(ref(db, `orders/${deliverFor.orderId}`), {
@@ -163,7 +182,12 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
         buyer: order.email || order.uid,
         product: `${item.title} × ${item.qty}`,
         delivery: deliveryOf(item),
-        amount: item.price != null ? Number(item.price) * Number(item.qty || 1) : index === 0 ? Number(order.total) || 0 : 0,
+        amount:
+          item.price != null
+            ? Number(item.price) * Number(item.qty || 1)
+            : index === 0
+              ? Number(order.total) || 0
+              : 0,
         status: order.status,
       }));
     });
@@ -183,14 +207,22 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
           />
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => exportOrdersCsv(exportFilteredRows(), `orders-${Date.now()}.csv`)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => exportOrdersCsv(exportFilteredRows(), `orders-${Date.now()}.csv`)}
+          >
             <Download className="size-4" /> CSV
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() =>
-              exportOrdersPdf(exportFilteredRows(), `${config.siteName || "Store"} — orders report`, `orders-${Date.now()}.pdf`)
+              exportOrdersPdf(
+                exportFilteredRows(),
+                `${config.siteName || "Store"} — orders report`,
+                `orders-${Date.now()}.pdf`,
+              )
             }
           >
             <FileText className="size-4" /> PDF
@@ -211,6 +243,7 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
                 <TableRow>
                   <TableHead>Order</TableHead>
                   <TableHead>Buyer</TableHead>
+                  <TableHead>Date</TableHead>
                   <TableHead>Items</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead>Status</TableHead>
@@ -221,7 +254,9 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
                 {filtered.map((order) => (
                   <Fragment key={order.orderId}>
                     <TableRow>
-                      <TableCell className="font-mono text-xs">#{order.orderId.slice(-6)}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        #{order.orderId.slice(-6)}
+                      </TableCell>
                       <TableCell className="max-w-[180px]">
                         <p className="truncate text-sm font-medium">
                           {userNames[order.uid] || order.email || order.uid}
@@ -230,12 +265,20 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
                           {order.email} {order.phone ? `· ${order.phone}` : ""}
                         </p>
                       </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <p className="text-sm">{formatOrderDate(order.date).date}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatOrderDate(order.date).time}
+                        </p>
+                      </TableCell>
                       <TableCell className="max-w-[220px]">
                         <p className="truncate text-sm text-muted-foreground">
                           {(order.items || []).map((i) => `${i.title} ×${i.qty}`).join(", ") || "—"}
                         </p>
                       </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">${order.total}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">
+                        ${order.total}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
                       </TableCell>
@@ -252,7 +295,12 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
                               <Download className="size-4" />
                             </Button>
                           ) : null}
-                          <Button size="sm" variant="outline" className="h-8" onClick={() => openDelivery(order)}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            onClick={() => openDelivery(order)}
+                          >
                             {order.status === "Completed" ? "Edit" : "Deliver"}
                           </Button>
                           <Button
@@ -261,9 +309,9 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
                             className="h-8 text-destructive hover:bg-destructive/10"
                             onClick={() =>
                               db &&
-                              update(ref(db, `orders/${order.orderId}`), { status: "Cancelled" }).then(() =>
-                                notify("Order marked Cancelled"),
-                              )
+                              update(ref(db, `orders/${order.orderId}`), {
+                                status: "Cancelled",
+                              }).then(() => notify("Order marked Cancelled"))
                             }
                           >
                             Cancel
@@ -273,7 +321,7 @@ export function OrdersAdmin({ orders }: { orders: OrderRow[] }) {
                     </TableRow>
                     {deliverFor?.orderId === order.orderId ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="bg-muted/30">
+                        <TableCell colSpan={7} className="bg-muted/30">
                           <div className="space-y-3 py-2">
                             <p className="text-sm font-semibold">Delivery details</p>
                             {(order.items || []).map((item, index) => (
