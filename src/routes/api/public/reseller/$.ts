@@ -35,16 +35,42 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 /** Safe key for a DB path segment (idempotency keys may contain odd chars). */
 const encodeKey = (k: string) => k.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
 
+/**
+ * Countable stock for the API, matching the bot/website logic:
+ *   auto     → number of unused accounts in the stock list
+ *   supplier → the supplier's reported stock
+ *   manual   → not countable (always available)
+ *   repeat   → unlimited
+ * soldOut always forces 0. `unlimited` marks manual/repeat so callers can tell
+ * "lots" from an exact count; `stock` stays a number for backward compatibility.
+ */
+function apiStock(p: any): { stock: number; unlimited: boolean; inStock: boolean } {
+  if (p?.soldOut) return { stock: 0, unlimited: false, inStock: false };
+  const delivery = p?.delivery || "manual";
+  if (delivery === "auto") {
+    const n = Array.isArray(p.stock) ? p.stock.filter(Boolean).length : 0;
+    return { stock: n, unlimited: false, inStock: n > 0 };
+  }
+  if (delivery === "supplier") {
+    const n = Number(p.supplierStock || 0);
+    return { stock: n, unlimited: false, inStock: n > 0 };
+  }
+  // manual / repeat: always available, no countable limit.
+  return { stock: 0, unlimited: true, inStock: true };
+}
+
 function publicProduct(id: string, p: any) {
-  const stock = Array.isArray(p.stock) ? p.stock.filter(Boolean).length : 0;
+  const s = apiStock(p);
   return {
     id,
     title: p.title || "",
     price: unitPrice(p),
     category: p.category || "",
     delivery: p.delivery || "manual",
-    inStock: p.soldOut ? false : p.delivery === "manual" || p.delivery === "repeat" ? true : stock > 0,
-    stock,
+    inStock: s.inStock,
+    stock: s.stock,
+    // true for manual/repeat products that have no countable stock limit.
+    unlimited: s.unlimited,
     description: p.desc || "",
   };
 }
