@@ -172,7 +172,15 @@ async function handle(request: Request, splat: string): Promise<Response> {
   if (path === "order" && request.method === "POST") {
     const body = (await request.json().catch(() => null)) as any;
     const productId = String(body?.productId || "").trim();
-    const qty = Math.max(1, Math.min(20, Number(body?.qty || 1)));
+    // qty MUST be a finite positive integer. A non-numeric qty (e.g. "abc")
+    // previously became NaN, which made price NaN; every NaN comparison is
+    // false, so the balance guard was skipped and orders were delivered without
+    // charging. Reject anything that is not a clean 1–20 integer.
+    const rawQty = Number(body?.qty ?? 1);
+    if (!Number.isFinite(rawQty) || !Number.isInteger(rawQty) || rawQty < 1 || rawQty > 20) {
+      return json({ ok: false, error: "qty must be a whole number between 1 and 20" }, 400);
+    }
+    const qty = rawQty;
     if (!productId) return json({ ok: false, error: "productId is required" }, 400);
 
     const p = await dbGet<any>(`products/${productId}`);
@@ -180,6 +188,10 @@ async function handle(request: Request, splat: string): Promise<Response> {
     if (p.soldOut) return json({ ok: false, error: "Product is out of stock" }, 409);
 
     const price = round2(unitPrice(p) * qty);
+    // Final guard: never proceed with a non-positive or non-finite price.
+    if (!Number.isFinite(price) || price <= 0) {
+      return json({ ok: false, error: "Could not price this order" }, 400);
+    }
 
     // Idempotency: a client may send a stable key to make retries safe. We claim
     // it once; a duplicate is rejected instead of charging again.
@@ -204,6 +216,9 @@ async function handle(request: Request, splat: string): Promise<Response> {
     // overspend (fixes the previous read-check-write race).
     const paid = await dbTransact<number>(`users/${uid}/wallet`, (w) => {
       const cur = Number(w) || 0;
+      // Never let a non-finite price or balance through — a NaN would make the
+      // comparison below false and could zero/corrupt the wallet.
+      if (!Number.isFinite(cur) || !Number.isFinite(price) || price <= 0) return undefined;
       if (cur < price) return undefined; // abort: not enough balance
       return round2(cur - price);
     });
