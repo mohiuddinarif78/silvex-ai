@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, History as HistoryIcon, Search, Wallet } from "lucide-react";
+import {
+  ChevronDown,
+  History as HistoryIcon,
+  Search,
+  Wallet,
+  Ban,
+  ShieldCheck,
+} from "lucide-react";
 import { get, onValue, push, ref, set, update } from "@/lib/fb/database";
 import { useStore, isOwnerEmail, isFixedOwner } from "@/context/StoreContext";
 import { reportBalanceChange } from "@/lib/wallet.functions";
@@ -19,11 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@radix-ui/react-collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@radix-ui/react-collapsible";
 
 type HistoryRow = {
   id: string;
@@ -43,6 +46,9 @@ type UserRow = {
   isAdmin?: boolean;
   isOwner?: boolean;
   hidden?: boolean;
+  blocked?: boolean;
+  apiKey?: string;
+  apiEnabled?: boolean;
 };
 
 type SortMode = "none" | "deposits" | "wallet" | "orders";
@@ -66,6 +72,10 @@ export function UsersAdmin() {
   const [editAmount, setEditAmount] = useState("");
   const [editConfirm, setEditConfirm] = useState("");
   const [editBusy, setEditBusy] = useState(false);
+
+  // Ban confirmation dialog state
+  const [banUser, setBanUser] = useState<UserRow | null>(null);
+  const [banBusy, setBanBusy] = useState(false);
 
   const allWalletRows = useMemo(
     () =>
@@ -117,7 +127,9 @@ export function UsersAdmin() {
   useEffect(() => {
     if (!db) return;
     return onValue(ref(db, "users"), (s) =>
-      setUsers(Object.entries(s.val() || {}).map(([uid, u]) => ({ uid, ...(u as Omit<UserRow, "uid">) }))),
+      setUsers(
+        Object.entries(s.val() || {}).map(([uid, u]) => ({ uid, ...(u as Omit<UserRow, "uid">) })),
+      ),
     );
   }, [db]);
 
@@ -196,6 +208,43 @@ export function UsersAdmin() {
   const editChange = editUser ? Number(editAmount || 0) - Number(editUser.wallet ?? 0) : 0;
   const needsConfirm = Math.abs(editChange) >= 20;
 
+  // Ban a user: block them everywhere (website login, wallet ops and the
+  // reseller API all honour `blocked`) and kill any reseller API key so a
+  // leaked key stops working immediately. Staff writes bypass the usual
+  // per-field rules, so one update covers it.
+  async function banUserAction() {
+    if (!db || !banUser) return;
+    const u = banUser;
+    setBanBusy(true);
+    try {
+      if (u.apiKey) await set(ref(db, `apiKeys/${u.apiKey}`), null);
+      await update(ref(db, `users/${u.uid}`), {
+        blocked: true,
+        apiKey: null,
+        apiEnabled: false,
+      });
+      await push(ref(db, `users/${u.uid}/history`), {
+        type: "Adjustment",
+        amount: 0,
+        desc: `Account banned by admin ${user?.email || ""}`,
+        by: user?.email || "",
+        date: new Date().toISOString(),
+      }).catch(() => undefined);
+      notify("User banned");
+      setBanUser(null);
+    } finally {
+      setBanBusy(false);
+    }
+  }
+
+  // Lift a ban. The old API key is not restored — the user regenerates one
+  // from the bot — but they can log in and buy again.
+  async function unbanUser(u: UserRow) {
+    if (!db) return;
+    await update(ref(db, `users/${u.uid}`), { blocked: false });
+    notify("User unbanned");
+  }
+
   return (
     <div className="space-y-4">
       {/* Search + filters */}
@@ -257,7 +306,9 @@ export function UsersAdmin() {
                 }}
               />
               {walletFiltered.length === 0 ? (
-                <p className="py-2 text-center text-xs text-muted-foreground">No wallet changes found.</p>
+                <p className="py-2 text-center text-xs text-muted-foreground">
+                  No wallet changes found.
+                </p>
               ) : (
                 walletFiltered.slice(0, walletLimit).map((h) => (
                   <div
@@ -272,12 +323,19 @@ export function UsersAdmin() {
                         {h.type} — {h.desc}
                       </p>
                     </div>
-                    <span className="shrink-0 font-display text-sm font-bold tabular-nums">${h.amount ?? 0}</span>
+                    <span className="shrink-0 font-display text-sm font-bold tabular-nums">
+                      ${h.amount ?? 0}
+                    </span>
                   </div>
                 ))
               )}
               {walletFiltered.length > walletLimit ? (
-                <Button variant="ghost" size="sm" className="w-full" onClick={() => setWalletLimit((l) => l + 20)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => setWalletLimit((l) => l + 20)}
+                >
                   Show more
                 </Button>
               ) : null}
@@ -299,7 +357,9 @@ export function UsersAdmin() {
                     <p className="truncate text-sm font-semibold">{u.name || "User"}</p>
                     <p className="truncate text-xs text-muted-foreground">{u.email}</p>
                   </div>
-                  <span className="shrink-0 font-display text-base font-bold tabular-nums">${u.wallet ?? 0}</span>
+                  <span className="shrink-0 font-display text-base font-bold tabular-nums">
+                    ${u.wallet ?? 0}
+                  </span>
                 </div>
                 {sortMode !== "none" ? (
                   <p className="mt-1 text-xs font-medium text-muted-foreground">
@@ -350,13 +410,44 @@ export function UsersAdmin() {
                       Remove admin
                     </Button>
                   ) : null}
+
+                  {/* Ban / unban — not for yourself or a permanent owner */}
+                  {u.uid !== user?.uid && !isFixedOwner(u.email) ? (
+                    u.blocked ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-success"
+                        onClick={() => unbanUser(u)}
+                      >
+                        <ShieldCheck className="size-4" /> Unban
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:bg-destructive/10"
+                        onClick={() => setBanUser(u)}
+                      >
+                        <Ban className="size-4" /> Ban
+                      </Button>
+                    )
+                  ) : null}
+
+                  {u.blocked ? (
+                    <Badge variant="muted" className="bg-destructive/10 text-destructive">
+                      Banned
+                    </Badge>
+                  ) : null}
                 </div>
 
                 {historyFor === u.uid ? (
                   <div className="mt-3 space-y-2 border-t border-border pt-3">
                     <p className="text-xs font-semibold text-muted-foreground">Wallet history</p>
                     {history.length === 0 ? (
-                      <p className="py-2 text-center text-xs text-muted-foreground">No transactions yet.</p>
+                      <p className="py-2 text-center text-xs text-muted-foreground">
+                        No transactions yet.
+                      </p>
                     ) : (
                       history.slice(0, historyLimit).map((h) => (
                         <div
@@ -367,17 +458,26 @@ export function UsersAdmin() {
                             <p className="flex items-center gap-2 text-xs font-semibold">
                               {h.type}
                               {h.status ? (
-                                <Badge variant={h.status === "Paid" ? "default" : "muted"}>{h.status}</Badge>
+                                <Badge variant={h.status === "Paid" ? "default" : "muted"}>
+                                  {h.status}
+                                </Badge>
                               ) : null}
                             </p>
                             <p className="truncate text-[11px] text-muted-foreground">{h.desc}</p>
                           </div>
-                          <span className="shrink-0 font-display text-sm font-bold tabular-nums">${h.amount ?? 0}</span>
+                          <span className="shrink-0 font-display text-sm font-bold tabular-nums">
+                            ${h.amount ?? 0}
+                          </span>
                         </div>
                       ))
                     )}
                     {history.length > historyLimit ? (
-                      <Button variant="ghost" size="sm" className="w-full" onClick={() => setHistoryLimit((l) => l + 20)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => setHistoryLimit((l) => l + 20)}
+                      >
                         Show more
                       </Button>
                     ) : null}
@@ -403,7 +503,8 @@ export function UsersAdmin() {
           <DialogHeader>
             <DialogTitle>Set wallet balance</DialogTitle>
             <DialogDescription>
-              {editUser?.email || editUser?.uid} · current ${Number(editUser?.wallet ?? 0).toFixed(2)}
+              {editUser?.email || editUser?.uid} · current $
+              {Number(editUser?.wallet ?? 0).toFixed(2)}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -449,6 +550,33 @@ export function UsersAdmin() {
             </Button>
             <Button onClick={saveWallet} disabled={editBusy}>
               {editBusy ? "Saving…" : "Update balance"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ban confirmation dialog */}
+      <Dialog open={Boolean(banUser)} onOpenChange={(open) => !open && setBanUser(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Ban this user?</DialogTitle>
+            <DialogDescription>{banUser?.email || banUser?.uid}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>Banning will immediately:</p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>sign them out and block website login</li>
+              <li>stop all purchases, deposits and the Telegram bot</li>
+              <li>revoke their reseller API key{banUser?.apiKey ? "" : " (none set)"}</li>
+            </ul>
+            <p>Their wallet balance and history are kept. You can unban later.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBanUser(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={banUserAction} disabled={banBusy}>
+              {banBusy ? "Banning…" : "Ban user"}
             </Button>
           </DialogFooter>
         </DialogContent>

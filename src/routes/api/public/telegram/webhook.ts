@@ -1,8 +1,32 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { dbCreateIfAbsent, loadBotRuntime, rememberUsername, telegramWebhookOk, tg } from "@/lib/telegram.server";
+import {
+  dbCreateIfAbsent,
+  dbGet,
+  dbUidByChatId,
+  loadBotRuntime,
+  rememberUsername,
+  telegramWebhookOk,
+  tg,
+} from "@/lib/telegram.server";
 import { editTarget, loadBotPresentation, rememberName } from "@/lib/bot/core";
 import { handleCallback } from "@/lib/bot/route-callback";
 import { handleText } from "@/lib/bot/route-text";
+
+/**
+ * True when the Telegram account behind this chat has been banned by an admin.
+ * The ban is stored on the store user as `blocked` (same flag the website and
+ * reseller API already honour). We resolve the chat id to its uid via the
+ * indexed lookup, falling back to the deterministic `tg_<chatId>` id used for
+ * bot-only accounts. Reads only — never creates a user.
+ */
+async function isChatBlocked(chatId: number): Promise<boolean> {
+  try {
+    const uid = (await dbUidByChatId(chatId).catch(() => null)) || `tg_${chatId}`;
+    return Boolean(await dbGet<boolean>(`users/${uid}/blocked`));
+  } catch {
+    return false; // never let a lookup error lock everyone out
+  }
+}
 
 const chatQueues = new Map<string, Promise<void>>();
 const SUPPLIER_SYNC_INTERVAL_MS = 60_000;
@@ -37,6 +61,32 @@ void Promise.all([
 
 async function processUpdate(update: any) {
   await loadBotPresentation().catch(() => undefined);
+
+  // Banned accounts get one short notice and nothing else runs — no buying,
+  // depositing, support, or browsing. The flag is set by admins from the
+  // website (Users tab) or the block-reseller-account script.
+  const guardChatId = Number(
+    update?.callback_query?.message?.chat?.id ??
+      update?.message?.chat?.id ??
+      update?.edited_message?.chat?.id ??
+      0,
+  );
+  if (guardChatId && (await isChatBlocked(guardChatId))) {
+    if (update?.callback_query?.id) {
+      await tg("answerCallbackQuery", {
+        callback_query_id: update.callback_query.id,
+        text: "Your account has been suspended.",
+        show_alert: true,
+      }).catch(() => undefined);
+    } else {
+      await tg("sendMessage", {
+        chat_id: guardChatId,
+        text: "🚫 Your account has been suspended. Please contact support if you believe this is a mistake.",
+      }).catch(() => undefined);
+    }
+    return;
+  }
+
   if (update?.business_connection) {
     const { handleBusinessConnection } = await import("@/lib/bot/business");
     await handleBusinessConnection(update.business_connection);
@@ -121,9 +171,11 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             "misc",
         );
         const prev = chatQueues.get(key) ?? Promise.resolve();
-        const next = prev.then(() => processUpdate(update)).catch((err) => {
-          console.error("telegram webhook error", err);
-        });
+        const next = prev
+          .then(() => processUpdate(update))
+          .catch((err) => {
+            console.error("telegram webhook error", err);
+          });
         chatQueues.set(key, next);
         void next.finally(() => {
           if (chatQueues.get(key) === next) chatQueues.delete(key);
